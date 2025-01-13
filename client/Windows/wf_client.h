@@ -35,7 +35,6 @@
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/gdi/dc.h>
 #include <freerdp/gdi/region.h>
-#include <freerdp/cache/cache.h>
 #include <freerdp/codec/color.h>
 
 #include <freerdp/client/rail.h>
@@ -56,6 +55,7 @@ extern "C"
 
 // System menu constants
 #define SYSCOMMAND_ID_SMARTSIZING 1000
+#define SYSCOMMAND_ID_REQUEST_CONTROL 1001
 
 	typedef struct
 	{
@@ -95,6 +95,8 @@ extern "C"
 		WNDCLASSEX wndClass;
 		LPCTSTR wndClassName;
 		HCURSOR hDefaultCursor;
+
+		UINT systemMenuInsertPosition;
 
 		HWND hwnd;
 		BOOL is_shown;

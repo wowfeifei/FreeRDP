@@ -1,6 +1,7 @@
 #!/bin/bash
 SCM_URL=https://github.com/cisco/openh264/archive
-SCM_TAG=master
+SCM_TAG=v2.4.1
+SCM_HASH=8ffbe944e74043d0d3fb53d4a2a14c94de71f58dbea6a06d0dc92369542958ea
 
 source $(dirname "${BASH_SOURCE[0]}")/android-build-common.sh
 
@@ -25,8 +26,7 @@ function build {
 
 # Run the main program.
 common_parse_arguments $@
-common_check_requirements
-common_update $SCM_URL $SCM_TAG $BUILD_SRC
+common_update $SCM_URL $SCM_TAG $BUILD_SRC $SCM_HASH
 
 
 for ARCH in $BUILD_ARCH

@@ -1,8 +1,8 @@
 #!/bin/bash
 
 SCM_URL=https://github.com/FFmpeg/FFmpeg/archive
-SCM_TAG=n4.4.1
-
+SCM_TAG=n7.0.1
+SCM_HASH=8dab1da0c7ebccb2dce99265901f22ac40f8e0fbbe4a89a368d7645f2e79caa0
 OLD_PATH=$PATH
 
 source $(dirname "${BASH_SOURCE[0]}")/android-build-common.sh
@@ -124,6 +124,7 @@ function build {
         --enable-pic \
         --enable-jni --enable-mediacodec \
         --enable-shared \
+        --disable-vulkan \
         --disable-stripping \
         --disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-avformat
 
@@ -134,8 +135,7 @@ function build {
 
 # Run the main program.
 common_parse_arguments $@
-common_check_requirements
-common_update $SCM_URL $SCM_TAG $BUILD_SRC
+common_update $SCM_URL $SCM_TAG $BUILD_SRC $SCM_HASH
 
 HOST_PKG_CONFIG_PATH=`command -v pkg-config`
 if [ -z ${HOST_PKG_CONFIG_PATH} ]; then

@@ -29,9 +29,10 @@
 typedef enum
 {
 	NEGOTIATE_STATE_INITIAL,
+	NEGOTIATE_STATE_FINAL_OPTIMISTIC,
 	NEGOTIATE_STATE_NEGORESP,
 	NEGOTIATE_STATE_MIC,
-	NEGOTIATE_STATE_FINAL
+	NEGOTIATE_STATE_FINAL,
 } NEGOTIATE_STATE;
 
 typedef struct Mech_st Mech;
@@ -50,5 +51,7 @@ extern const SecPkgInfoA NEGOTIATE_SecPkgInfoA;
 extern const SecPkgInfoW NEGOTIATE_SecPkgInfoW;
 extern const SecurityFunctionTableA NEGOTIATE_SecurityFunctionTableA;
 extern const SecurityFunctionTableW NEGOTIATE_SecurityFunctionTableW;
+
+BOOL NEGOTIATE_init(void);
 
 #endif /* WINPR_SSPI_NEGOTIATE_PRIVATE_H */

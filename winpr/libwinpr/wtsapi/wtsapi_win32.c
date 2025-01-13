@@ -30,6 +30,10 @@
 
 #include "../log.h"
 
+#include <winternl.h>
+
+#pragma comment(lib, "ntdll.lib")
+
 #define WTSAPI_CHANNEL_MAGIC 0x44484356
 #define TAG WINPR_TAG("wtsapi")
 
@@ -82,7 +86,7 @@ BOOL WINAPI Win32_WTSVirtualChannelClose(HANDLE hChannel);
  * our WinPR wtsapi functions.
  *
  * To be safe we only use the _wts_malloc, _wts_calloc, _wts_free wrappers
- * for memory managment the code below.
+ * for memory management the code below.
  */
 
 static void* _wts_malloc(size_t size)
@@ -122,7 +126,7 @@ BOOL Win32_WTSVirtualChannelReadAsync(WTSAPI_CHANNEL* pChannel)
 
 	ZeroMemory(&(pChannel->overlapped), sizeof(OVERLAPPED));
 	pChannel->overlapped.hEvent = pChannel->hEvent;
-	ResetEvent(pChannel->hEvent);
+	(void)ResetEvent(pChannel->hEvent);
 
 	if (pChannel->showProtocol)
 	{
@@ -142,7 +146,7 @@ BOOL Win32_WTSVirtualChannelReadAsync(WTSAPI_CHANNEL* pChannel)
 			pChannel->header->length = numBytes;
 
 			pChannel->readDone = TRUE;
-			SetEvent(pChannel->hEvent);
+			(void)SetEvent(pChannel->hEvent);
 
 			return TRUE;
 		}
@@ -197,7 +201,7 @@ HANDLE WINAPI Win32_WTSVirtualChannelOpen_Internal(HANDLE hServer, DWORD Session
 
 	if (!pChannel)
 	{
-		CloseHandle(hFile);
+		(void)CloseHandle(hFile);
 		SetLastError(ERROR_NOT_ENOUGH_MEMORY);
 		return NULL;
 	}
@@ -210,7 +214,7 @@ HANDLE WINAPI Win32_WTSVirtualChannelOpen_Internal(HANDLE hServer, DWORD Session
 	pChannel->VirtualName = _wts_calloc(1, virtualNameLen + 1);
 	if (!pChannel->VirtualName)
 	{
-		CloseHandle(hFile);
+		(void)CloseHandle(hFile);
 		SetLastError(ERROR_NOT_ENOUGH_MEMORY);
 		_wts_free(pChannel);
 		return NULL;
@@ -276,7 +280,7 @@ BOOL WINAPI Win32_WTSVirtualChannelClose(HANDLE hChannel)
 
 	if (pChannel->hEvent)
 	{
-		CloseHandle(pChannel->hEvent);
+		(void)CloseHandle(pChannel->hEvent);
 		pChannel->hEvent = NULL;
 	}
 
@@ -334,13 +338,11 @@ BOOL WINAPI Win32_WTSVirtualChannelRead_Static(WTSAPI_CHANNEL* pChannel, DWORD d
 	else if (pChannel->readSync)
 	{
 		BOOL bSuccess;
-		OVERLAPPED overlapped;
+		OVERLAPPED overlapped = { 0 };
 		DWORD numBytesRead = 0;
 		DWORD numBytesToRead = 0;
 
 		*lpNumberOfBytesTransferred = 0;
-
-		ZeroMemory(&overlapped, sizeof(OVERLAPPED));
 
 		numBytesToRead = nNumberOfBytesToRead;
 
@@ -454,13 +456,11 @@ BOOL WINAPI Win32_WTSVirtualChannelRead_Dynamic(WTSAPI_CHANNEL* pChannel, DWORD 
 	if (pChannel->readSync)
 	{
 		BOOL bSuccess;
-		OVERLAPPED overlapped;
+		OVERLAPPED overlapped = { 0 };
 		DWORD numBytesRead = 0;
 		DWORD numBytesToRead = 0;
 
 		*lpNumberOfBytesTransferred = 0;
-
-		ZeroMemory(&overlapped, sizeof(OVERLAPPED));
 
 		numBytesToRead = nNumberOfBytesToRead;
 
@@ -581,9 +581,7 @@ BOOL WINAPI Win32_WTSVirtualChannelRead(HANDLE hChannel, DWORD dwMilliseconds, L
 
 	if (!pChannel->waitObjectMode)
 	{
-		OVERLAPPED overlapped;
-
-		ZeroMemory(&overlapped, sizeof(OVERLAPPED));
+		OVERLAPPED overlapped = { 0 };
 
 		if (ReadFile(pChannel->hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesTransferred,
 		             &overlapped))
@@ -631,7 +629,7 @@ BOOL WINAPI Win32_WTSVirtualChannelWrite(HANDLE hChannel, LPCVOID lpBuffer,
                                          DWORD nNumberOfBytesToWrite,
                                          LPDWORD lpNumberOfBytesTransferred)
 {
-	OVERLAPPED overlapped;
+	OVERLAPPED overlapped = { 0 };
 	WTSAPI_CHANNEL* pChannel = (WTSAPI_CHANNEL*)hChannel;
 
 	if (!pChannel || (pChannel->magic != WTSAPI_CHANNEL_MAGIC))
@@ -639,8 +637,6 @@ BOOL WINAPI Win32_WTSVirtualChannelWrite(HANDLE hChannel, LPCVOID lpBuffer,
 		SetLastError(ERROR_INVALID_PARAMETER);
 		return FALSE;
 	}
-
-	ZeroMemory(&overlapped, sizeof(OVERLAPPED));
 
 	if (WriteFile(pChannel->hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesTransferred,
 	              &overlapped))
@@ -658,9 +654,7 @@ BOOL WINAPI Win32_WTSVirtualChannelWrite(HANDLE hChannel, LPCVOID lpBuffer,
 
 BOOL Win32_WTSVirtualChannelPurge_Internal(HANDLE hChannelHandle, ULONG IoControlCode)
 {
-	DWORD error;
-	NTSTATUS ntstatus;
-	IO_STATUS_BLOCK ioStatusBlock;
+	IO_STATUS_BLOCK ioStatusBlock = { 0 };
 	WTSAPI_CHANNEL* pChannel = (WTSAPI_CHANNEL*)hChannelHandle;
 
 	if (!pChannel || (pChannel->magic != WTSAPI_CHANNEL_MAGIC))
@@ -669,28 +663,34 @@ BOOL Win32_WTSVirtualChannelPurge_Internal(HANDLE hChannelHandle, ULONG IoContro
 		return FALSE;
 	}
 
-	ntstatus =
-	    _NtDeviceIoControlFile(pChannel->hFile, 0, 0, 0, &ioStatusBlock, IoControlCode, 0, 0, 0, 0);
+	NTSTATUS ntstatus =
+	    NtDeviceIoControlFile(pChannel->hFile, 0, 0, 0, &ioStatusBlock, IoControlCode, 0, 0, 0, 0);
 
 	if (ntstatus == STATUS_PENDING)
 	{
-		ntstatus = _NtWaitForSingleObject(pChannel->hFile, 0, 0);
+		ntstatus = NtWaitForSingleObject(pChannel->hFile, 0, 0);
 
 		if (ntstatus >= 0)
+		{
+#if defined(NONAMELESSUNION) && !defined(__MINGW32__)
+			ntstatus = ioStatusBlock.DUMMYUNIONNAME.Status;
+#else
 			ntstatus = ioStatusBlock.Status;
+#endif
+		}
 	}
 
 	if (ntstatus == STATUS_BUFFER_OVERFLOW)
 	{
 		ntstatus = STATUS_BUFFER_TOO_SMALL;
-		error = _RtlNtStatusToDosError(ntstatus);
+		const DWORD error = RtlNtStatusToDosError(ntstatus);
 		SetLastError(error);
 		return FALSE;
 	}
 
 	if (ntstatus < 0)
 	{
-		error = _RtlNtStatusToDosError(ntstatus);
+		const DWORD error = RtlNtStatusToDosError(ntstatus);
 		SetLastError(error);
 		return FALSE;
 	}
@@ -789,9 +789,9 @@ BOOL Win32_InitializeWinSta(PWtsApiFunctionTable pWtsApi)
 		return FALSE;
 
 	pfnWinStationVirtualOpen =
-	    (fnWinStationVirtualOpen)GetProcAddress(g_WinStaModule, "WinStationVirtualOpen");
+	    GetProcAddressAs(g_WinStaModule, "WinStationVirtualOpen", fnWinStationVirtualOpen);
 	pfnWinStationVirtualOpenEx =
-	    (fnWinStationVirtualOpenEx)GetProcAddress(g_WinStaModule, "WinStationVirtualOpenEx");
+	    GetProcAddressAs(g_WinStaModule, "WinStationVirtualOpenEx", fnWinStationVirtualOpenEx);
 
 	if (!pfnWinStationVirtualOpen | !pfnWinStationVirtualOpenEx)
 		return FALSE;

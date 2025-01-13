@@ -35,7 +35,8 @@
 
 #include "../resource/resource.h"
 
-#include "wf_client.h"
+#include <wf_client.h>
+#include <wf_defaults.h>
 
 #include <shellapi.h>
 
@@ -51,7 +52,7 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	char** argv = NULL;
 	RDP_CLIENT_ENTRY_POINTS clientEntryPoints = { 0 };
 	int ret = 1;
-	int argc = 0, i;
+	int argc = 0;
 	LPWSTR* args = NULL;
 
 	WINPR_UNUSED(hInstance);
@@ -80,7 +81,7 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	if (!argv)
 		goto out;
 
-	for (i = 0; i < argc; i++)
+	for (int i = 0; i < argc; i++)
 	{
 		int size = WideCharToMultiByte(CP_UTF8, 0, args[i], -1, NULL, 0, NULL, NULL);
 		if (size <= 0)
@@ -94,6 +95,8 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			goto out;
 	}
 
+	freerdp_client_warn_deprecated(argc, argv);
+
 	settings = context->settings;
 	wfc = (wfContext*)context;
 
@@ -106,6 +109,8 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		ret = freerdp_client_settings_command_line_status_print(settings, status, argc, argv);
 		goto out;
 	}
+
+	AddDefaultSettings(settings);
 
 	if (freerdp_client_start(context) != 0)
 		goto out;
@@ -129,7 +134,7 @@ out:
 
 	if (argv)
 	{
-		for (i = 0; i < argc; i++)
+		for (int i = 0; i < argc; i++)
 			free(argv[i]);
 
 		free(argv);

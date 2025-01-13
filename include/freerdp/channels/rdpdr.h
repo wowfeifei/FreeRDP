@@ -33,8 +33,20 @@
 #include <winpr/interlocked.h>
 #include <winpr/collections.h>
 
-#include <freerdp/freerdp.h>
+#include <freerdp/api.h>
+#include <freerdp/types.h>
+#include <freerdp/settings.h>
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/** The command line name of the channel
+ *
+ *  \since version 3.0.0
+ */
+#define RDPDR_CHANNEL_NAME "rdpdr"
 #define RDPDR_SVC_CHANNEL_NAME "rdpdr"
 
 #define RDPDR_DEVICE_IO_REQUEST_LENGTH 24
@@ -130,8 +142,6 @@ enum IRP_MN
 /* DR_CREATE_RSP.Information */
 /* DR_DRIVE_CREATE_RSP.DeviceCreateResponse */
 
-#define FILE_OPENED 0x00000001
-#define FILE_OVERWRITTEN 0x00000003
 
 /* DR_CORE_CLIENT_ANNOUNCE_RSP.VersionMinor */
 #define RDPDR_MAJOR_RDP_VERSION 1
@@ -348,7 +358,7 @@ struct S_IRP
 	UINT32 MinorFunction;
 	wStream* input;
 
-	UINT32 IoStatus;
+	NTSTATUS IoStatus;
 	wStream* output;
 
 	pcIRPResponse Complete;
@@ -377,6 +387,10 @@ typedef struct
 } DEVICE_SERVICE_ENTRY_POINTS;
 typedef DEVICE_SERVICE_ENTRY_POINTS* PDEVICE_SERVICE_ENTRY_POINTS;
 
-typedef UINT (*PDEVICE_SERVICE_ENTRY)(PDEVICE_SERVICE_ENTRY_POINTS);
+typedef UINT(VCAPITYPE* PDEVICE_SERVICE_ENTRY)(PDEVICE_SERVICE_ENTRY_POINTS);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREERDP_CHANNEL_RDPDR_H */

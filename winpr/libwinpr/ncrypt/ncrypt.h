@@ -45,6 +45,7 @@ typedef enum
 	NCRYPT_PROPERTY_CERTIFICATE,
 	NCRYPT_PROPERTY_READER,
 	NCRYPT_PROPERTY_SLOTID,
+	NCRYPT_PROPERTY_NAME,
 	NCRYPT_PROPERTY_UNKNOWN
 } NCryptKeyGetPropertyEnum;
 
@@ -78,14 +79,18 @@ typedef struct
 } NCryptBaseProvider;
 
 SECURITY_STATUS checkNCryptHandle(NCRYPT_HANDLE handle, NCryptHandleType matchType);
+
+SECURITY_STATUS winpr_NCryptDefault_dtor(NCRYPT_HANDLE handle);
+
 void* ncrypt_new_handle(NCryptHandleType kind, size_t len, NCryptGetPropertyFn getProp,
                         NCryptReleaseFn dtor);
-SECURITY_STATUS winpr_NCryptDefault_dtor(NCRYPT_HANDLE handle);
 
 #if defined(WITH_PKCS11)
 SECURITY_STATUS NCryptOpenP11StorageProviderEx(NCRYPT_PROV_HANDLE* phProvider,
                                                LPCWSTR pszProviderName, DWORD dwFlags,
                                                LPCSTR* modulePaths);
+
+const char* NCryptGetModulePath(NCRYPT_PROV_HANDLE phProvider);
 #endif
 
 #endif /* WINPR_LIBWINPR_NCRYPT_NCRYPT_H_ */
