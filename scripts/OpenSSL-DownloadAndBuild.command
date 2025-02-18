@@ -9,8 +9,8 @@
 
 ## Settings
 # openssl version to use
-OPENSSLVERSION="3.0.2"
-SHA256SUM="98e91ccead4d4756ae3c9cde5e09191a8e586d9f4d50838e7ec09d6411dfdb63"
+OPENSSLVERSION="3.4.0"
+SHA256SUM="e15dda82fe2fe8139dc2ac21a36d4ca01d5313c75f99f46c4e8a27709b7294bf"
 # SDK version to use - if not set latest version found is used
 SDK_VERSION=""
 
@@ -48,7 +48,7 @@ function buildArch(){
     then
         PLATFORM="iPhoneSimulator"
     else
-        sed -ie "s!static volatile sig_atomic_t intr_signal;!static volatile intr_signal;!" "crypto/ui/ui_openssl.c"
+        sed -ie "s!static volatile intr_signal;!static volatile sig_atomic_t intr_signal;!" "crypto/ui/ui_openssl.c"
         PLATFORM="iPhoneOS"
     fi
 
@@ -100,7 +100,7 @@ CS=`shasum -a 256 "openssl-$OPENSSLVERSION.tar.gz" | cut -d ' ' -f1`
 if [ ! "$CS" = "$SHA256SUM" ]; then
     echo "Downloading OpenSSL Version $OPENSSLVERSION ..."
     rm -f "openssl-$OPENSSLVERSION.tar.gz"
-    curl -o "openssl-$OPENSSLVERSION.tar.gz" https://www.openssl.org/source/openssl-$OPENSSLVERSION.tar.gz
+    curl -Lo openssl-$OPENSSLVERSION.tar.gz https://github.com/openssl/openssl/releases/download/openssl-$OPENSSLVERSION/openssl-$OPENSSLVERSION.tar.gz
 
     CS=`shasum -a 256 "openssl-$OPENSSLVERSION.tar.gz" | cut -d ' ' -f1`
     if [ ! "$CS" = "$SHA256SUM" ]; then
@@ -126,7 +126,7 @@ cd "openssl-$OPENSSLVERSION"
 
 case `pwd` in
      *\ * )
-           echo "The build path (`pwd`) contains whitepsaces - fix this."
+           echo "The build path (`pwd`) contains whitespaces - fix this."
            exit 1
           ;;
 esac
@@ -146,8 +146,8 @@ echo "Copying header files ..."
 cp -r include/ ../../include/
 echo
 
-echo "Combining to unversal binary"
+echo "Combining to universal binary"
 lipo -create ../../lib/libcrypto_*.a -o ../../lib/libcrypto.a
 lipo -create ../../lib/libssl_*.a -o ../../lib/libssl.a
 
-echo "Finished. Please verify the contens of the openssl folder in \"$INSTALLDIR\""
+echo "Finished. Please verify the contents of the openssl folder in \"$INSTALLDIR\""

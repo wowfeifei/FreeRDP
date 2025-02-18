@@ -29,7 +29,9 @@
 typedef enum
 {
 	FILTER_TYPE_KEYBOARD,                              /* proxyKeyboardEventInfo */
+	FILTER_TYPE_UNICODE,                               /* proxyUnicodeEventInfo */
 	FILTER_TYPE_MOUSE,                                 /* proxyMouseEventInfo */
+	FILTER_TYPE_MOUSE_EX,                              /* proxyMouseExEventInfo */
 	FILTER_TYPE_CLIENT_PASSTHROUGH_CHANNEL_DATA,       /* proxyChannelDataEventInfo */
 	FILTER_TYPE_SERVER_PASSTHROUGH_CHANNEL_DATA,       /* proxyChannelDataEventInfo */
 	FILTER_TYPE_CLIENT_PASSTHROUGH_DYN_CHANNEL_CREATE, /* proxyChannelDataEventInfo */
@@ -37,6 +39,9 @@ typedef enum
 	FILTER_TYPE_SERVER_PEER_LOGON,                     /* proxyServerPeerLogon */
 	FILTER_TYPE_CLIENT_PASSTHROUGH_CHANNEL_CREATE,     /* proxyChannelDataEventInfo */
 
+	FILTER_TYPE_STATIC_INTERCEPT_LIST, /* proxyChannelToInterceptData */
+	FILTER_TYPE_DYN_INTERCEPT_LIST,    /* proxyChannelToInterceptData */
+	FILTER_TYPE_INTERCEPT_CHANNEL,     /* proxyDynChannelInterceptData */
 	FILTER_LAST
 } PF_FILTER_TYPE;
 

@@ -35,6 +35,7 @@
 
 #include <winpr/wtypes.h>
 #include <winpr/crt.h>
+#include <winpr/string.h>
 #include <winpr/path.h>
 #include <winpr/file.h>
 #include <winpr/stream.h>
@@ -44,13 +45,12 @@
 #include "drive_file.h"
 
 #ifdef WITH_DEBUG_RDPDR
-#define DEBUG_WSTR(msg, wstr)                                            \
-	do                                                                   \
-	{                                                                    \
-		LPSTR lpstr;                                                     \
-		ConvertFromUnicode(CP_UTF8, 0, wstr, -1, &lpstr, 0, NULL, NULL); \
-		WLog_DBG(TAG, msg, lpstr);                                       \
-		free(lpstr);                                                     \
+#define DEBUG_WSTR(msg, wstr)                                    \
+	do                                                           \
+	{                                                            \
+		char lpstr[1024] = { 0 };                                \
+		(void)ConvertWCharToUtf8(wstr, lpstr, ARRAYSIZE(lpstr)); \
+		WLog_DBG(TAG, msg, lpstr);                               \
 	} while (0)
 #else
 #define DEBUG_WSTR(msg, wstr) \
@@ -59,12 +59,14 @@
 	} while (0)
 #endif
 
-static void drive_file_fix_path(WCHAR* path)
+static BOOL drive_file_fix_path(WCHAR* path, size_t length)
 {
-	size_t i;
-	size_t length = _wcslen(path);
+	if ((length == 0) || (length > UINT32_MAX))
+		return FALSE;
 
-	for (i = 0; i < length; i++)
+	WINPR_ASSERT(path);
+
+	for (size_t i = 0; i < length; i++)
 	{
 		if (path[i] == L'\\')
 			path[i] = L'/';
@@ -73,133 +75,115 @@ static void drive_file_fix_path(WCHAR* path)
 #ifdef WIN32
 
 	if ((length == 3) && (path[1] == L':') && (path[2] == L'/'))
-		return;
+		return FALSE;
 
 #else
 
 	if ((length == 1) && (path[0] == L'/'))
-		return;
+		return FALSE;
 
 #endif
 
 	if ((length > 0) && (path[length - 1] == L'/'))
 		path[length - 1] = L'\0';
+
+	return TRUE;
 }
 
-static WCHAR* drive_file_combine_fullpath(const WCHAR* base_path, const WCHAR* path,
-                                          size_t PathLength)
+static BOOL contains_dotdot(const WCHAR* path, size_t base_length, size_t path_length)
 {
-	WCHAR* fullpath;
-	size_t base_path_length;
+	WCHAR dotdotbuffer[6] = { 0 };
+	const WCHAR* dotdot = InitializeConstWCharFromUtf8("..", dotdotbuffer, ARRAYSIZE(dotdotbuffer));
+	const WCHAR* tst = path;
 
-	if (!base_path || (!path && (PathLength > 0)))
-		return NULL;
-
-	base_path_length = _wcslen(base_path) * 2;
-	fullpath = (WCHAR*)calloc(1, base_path_length + PathLength + sizeof(WCHAR));
-
-	if (!fullpath)
-	{
-		WLog_ERR(TAG, "malloc failed!");
-		return NULL;
-	}
-
-	CopyMemory(fullpath, base_path, base_path_length);
-	if (path)
-		CopyMemory((char*)fullpath + base_path_length, path, PathLength);
-	drive_file_fix_path(fullpath);
-	return fullpath;
-}
-
-static BOOL drive_file_remove_dir(const WCHAR* path)
-{
-	WIN32_FIND_DATAW findFileData;
-	BOOL ret = TRUE;
-	HANDLE dir;
-	WCHAR* fullpath;
-	WCHAR* path_slash;
-	size_t base_path_length;
-
-	if (!path)
+	if (path_length < 2)
 		return FALSE;
-
-	base_path_length = _wcslen(path) * 2;
-	path_slash = (WCHAR*)calloc(1, base_path_length + sizeof(WCHAR) * 3);
-
-	if (!path_slash)
-	{
-		WLog_ERR(TAG, "malloc failed!");
-		return FALSE;
-	}
-
-	CopyMemory(path_slash, path, base_path_length);
-	path_slash[base_path_length / 2] = L'/';
-	path_slash[base_path_length / 2 + 1] = L'*';
-	DEBUG_WSTR("Search in %s", path_slash);
-	dir = FindFirstFileW(path_slash, &findFileData);
-	path_slash[base_path_length / 2 + 1] = 0;
-
-	if (dir == INVALID_HANDLE_VALUE)
-	{
-		free(path_slash);
-		return FALSE;
-	}
 
 	do
 	{
-		size_t len = _wcslen(findFileData.cFileName);
+		tst = _wcsstr(tst, dotdot);
+		if (!tst)
+			return FALSE;
 
-		if ((len == 1 && findFileData.cFileName[0] == L'.') ||
-		    (len == 2 && findFileData.cFileName[0] == L'.' && findFileData.cFileName[1] == L'.'))
+		/* Filter .. sequences in file or directory names */
+		if ((base_length == 0) || (*(tst - 1) == L'/') || (*(tst - 1) == L'\\'))
 		{
-			continue;
+			if (tst + 2 < path + path_length)
+			{
+				if ((tst[2] == '/') || (tst[2] == '\\'))
+					return TRUE;
+			}
 		}
+		tst += 2;
+	} while (TRUE);
 
-		fullpath = drive_file_combine_fullpath(path_slash, findFileData.cFileName, len * 2);
-		DEBUG_WSTR("Delete %s", fullpath);
-
-		if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-		{
-			ret = drive_file_remove_dir(fullpath);
-		}
-		else
-		{
-			ret = DeleteFileW(fullpath);
-		}
-
-		free(fullpath);
-
-		if (!ret)
-			break;
-	} while (ret && FindNextFileW(dir, &findFileData) != 0);
-
-	FindClose(dir);
-
-	if (ret)
-	{
-		if (!RemoveDirectoryW(path))
-		{
-			ret = FALSE;
-		}
-	}
-
-	free(path_slash);
-	return ret;
+	return FALSE;
 }
 
-static BOOL drive_file_set_fullpath(DRIVE_FILE* file, WCHAR* fullpath)
+static WCHAR* drive_file_combine_fullpath(const WCHAR* base_path, const WCHAR* path,
+                                          size_t PathWCharLength)
+{
+	BOOL ok = FALSE;
+	WCHAR* fullpath = NULL;
+
+	if (!base_path || (!path && (PathWCharLength > 0)))
+		goto fail;
+
+	const size_t base_path_length = _wcsnlen(base_path, MAX_PATH);
+	const size_t length = base_path_length + PathWCharLength + 1;
+	fullpath = (WCHAR*)calloc(length, sizeof(WCHAR));
+
+	if (!fullpath)
+		goto fail;
+
+	CopyMemory(fullpath, base_path, base_path_length * sizeof(WCHAR));
+	if (path)
+		CopyMemory(&fullpath[base_path_length], path, PathWCharLength * sizeof(WCHAR));
+
+	if (!drive_file_fix_path(fullpath, length))
+		goto fail;
+
+	/* Ensure the path does not contain sequences like '..' */
+	if (contains_dotdot(&fullpath[base_path_length], base_path_length, PathWCharLength))
+	{
+		char abuffer[MAX_PATH] = { 0 };
+		(void)ConvertWCharToUtf8(&fullpath[base_path_length], abuffer, ARRAYSIZE(abuffer));
+
+		WLog_WARN(TAG, "[rdpdr] received invalid file path '%s' from server, aborting!",
+		          &abuffer[base_path_length]);
+		goto fail;
+	}
+
+	ok = TRUE;
+fail:
+	if (!ok)
+	{
+		free(fullpath);
+		fullpath = NULL;
+	}
+	return fullpath;
+}
+
+static BOOL drive_file_set_fullpath(DRIVE_FILE* file, const WCHAR* fullpath)
 {
 	if (!file || !fullpath)
 		return FALSE;
 
+	const size_t len = _wcslen(fullpath);
 	free(file->fullpath);
-	file->fullpath = fullpath;
-	file->filename = _wcsrchr(file->fullpath, L'/');
+	file->fullpath = NULL;
 
-	if (file->filename == NULL)
-		file->filename = file->fullpath;
-	else
-		file->filename += 1;
+	if (len == 0)
+		return TRUE;
+
+	file->fullpath = _wcsdup(fullpath);
+	if (!file->fullpath)
+		return FALSE;
+
+	const WCHAR sep[] = { PathGetSeparatorW(PATH_STYLE_NATIVE), '\0' };
+	WCHAR* filename = _wcsrchr(file->fullpath, *sep);
+	if (filename && _wcsncmp(filename, sep, ARRAYSIZE(sep)) == 0)
+		*filename = '\0';
 
 	return TRUE;
 }
@@ -331,16 +315,14 @@ static BOOL drive_file_init(DRIVE_FILE* file)
 	return file->file_handle != INVALID_HANDLE_VALUE;
 }
 
-DRIVE_FILE* drive_file_new(const WCHAR* base_path, const WCHAR* path, UINT32 PathLength, UINT32 id,
-                           UINT32 DesiredAccess, UINT32 CreateDisposition, UINT32 CreateOptions,
-                           UINT32 FileAttributes, UINT32 SharedAccess)
+DRIVE_FILE* drive_file_new(const WCHAR* base_path, const WCHAR* path, UINT32 PathWCharLength,
+                           UINT32 id, UINT32 DesiredAccess, UINT32 CreateDisposition,
+                           UINT32 CreateOptions, UINT32 FileAttributes, UINT32 SharedAccess)
 {
-	DRIVE_FILE* file;
-
-	if (!base_path || (!path && (PathLength > 0)))
+	if (!base_path || (!path && (PathWCharLength > 0)))
 		return NULL;
 
-	file = (DRIVE_FILE*)calloc(1, sizeof(DRIVE_FILE));
+	DRIVE_FILE* file = (DRIVE_FILE*)calloc(1, sizeof(DRIVE_FILE));
 
 	if (!file)
 	{
@@ -357,7 +339,10 @@ DRIVE_FILE* drive_file_new(const WCHAR* base_path, const WCHAR* path, UINT32 Pat
 	file->CreateDisposition = CreateDisposition;
 	file->CreateOptions = CreateOptions;
 	file->SharedAccess = SharedAccess;
-	drive_file_set_fullpath(file, drive_file_combine_fullpath(base_path, path, PathLength));
+
+	WCHAR* p = drive_file_combine_fullpath(base_path, path, PathWCharLength);
+	(void)drive_file_set_fullpath(file, p);
+	free(p);
 
 	if (!drive_file_init(file))
 	{
@@ -379,7 +364,7 @@ BOOL drive_file_free(DRIVE_FILE* file)
 
 	if (file->file_handle != INVALID_HANDLE_VALUE)
 	{
-		CloseHandle(file->file_handle);
+		(void)CloseHandle(file->file_handle);
 		file->file_handle = INVALID_HANDLE_VALUE;
 	}
 
@@ -393,7 +378,7 @@ BOOL drive_file_free(DRIVE_FILE* file)
 	{
 		if (file->is_dir)
 		{
-			if (!drive_file_remove_dir(file->fullpath))
+			if (!winpr_RemoveDirectory_RecursiveW(file->fullpath))
 				goto fail;
 		}
 		else if (!DeleteFileW(file->fullpath))
@@ -410,7 +395,7 @@ fail:
 
 BOOL drive_file_seek(DRIVE_FILE* file, UINT64 Offset)
 {
-	LARGE_INTEGER loffset;
+	LARGE_INTEGER loffset = { 0 };
 
 	if (!file)
 		return FALSE;
@@ -424,7 +409,7 @@ BOOL drive_file_seek(DRIVE_FILE* file, UINT64 Offset)
 
 BOOL drive_file_read(DRIVE_FILE* file, BYTE* buffer, UINT32* Length)
 {
-	DWORD read;
+	DWORD read = 0;
 
 	if (!file || !buffer || !Length)
 		return FALSE;
@@ -440,9 +425,9 @@ BOOL drive_file_read(DRIVE_FILE* file, BYTE* buffer, UINT32* Length)
 	return FALSE;
 }
 
-BOOL drive_file_write(DRIVE_FILE* file, BYTE* buffer, UINT32 Length)
+BOOL drive_file_write(DRIVE_FILE* file, const BYTE* buffer, UINT32 Length)
 {
-	DWORD written;
+	DWORD written = 0;
 
 	if (!file || !buffer)
 		return FALSE;
@@ -461,50 +446,28 @@ BOOL drive_file_write(DRIVE_FILE* file, BYTE* buffer, UINT32 Length)
 	return TRUE;
 }
 
-BOOL drive_file_query_information(DRIVE_FILE* file, UINT32 FsInformationClass, wStream* output)
+static BOOL drive_file_query_from_handle_information(const DRIVE_FILE* file,
+                                                     const BY_HANDLE_FILE_INFORMATION* info,
+                                                     UINT32 FsInformationClass, wStream* output)
 {
-	BY_HANDLE_FILE_INFORMATION fileInformation;
-	BOOL status;
-	HANDLE hFile;
-
-	if (!file || !output)
-		return FALSE;
-
-	hFile = CreateFileW(file->fullpath, 0, FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
-	                    FILE_ATTRIBUTE_NORMAL, NULL);
-	if (hFile == INVALID_HANDLE_VALUE)
-		goto out_fail;
-	status = GetFileInformationByHandle(hFile, &fileInformation);
-	CloseHandle(hFile);
-	if (!status)
-		goto out_fail;
-
 	switch (FsInformationClass)
 	{
 		case FileBasicInformation:
 
 			/* http://msdn.microsoft.com/en-us/library/cc232094.aspx */
 			if (!Stream_EnsureRemainingCapacity(output, 4 + 36))
-				goto out_fail;
+				return FALSE;
 
-			Stream_Write_UINT32(output, 36); /* Length */
-			Stream_Write_UINT32(output,
-			                    fileInformation.ftCreationTime.dwLowDateTime); /* CreationTime */
-			Stream_Write_UINT32(output,
-			                    fileInformation.ftCreationTime.dwHighDateTime); /* CreationTime */
-			Stream_Write_UINT32(
-			    output, fileInformation.ftLastAccessTime.dwLowDateTime); /* LastAccessTime */
-			Stream_Write_UINT32(
-			    output, fileInformation.ftLastAccessTime.dwHighDateTime); /* LastAccessTime */
-			Stream_Write_UINT32(output,
-			                    fileInformation.ftLastWriteTime.dwLowDateTime); /* LastWriteTime */
-			Stream_Write_UINT32(output,
-			                    fileInformation.ftLastWriteTime.dwHighDateTime); /* LastWriteTime */
-			Stream_Write_UINT32(output,
-			                    fileInformation.ftLastWriteTime.dwLowDateTime); /* ChangeTime */
-			Stream_Write_UINT32(output,
-			                    fileInformation.ftLastWriteTime.dwHighDateTime); /* ChangeTime */
-			Stream_Write_UINT32(output, fileInformation.dwFileAttributes); /* FileAttributes */
+			Stream_Write_UINT32(output, 36);                                    /* Length */
+			Stream_Write_UINT32(output, info->ftCreationTime.dwLowDateTime);    /* CreationTime */
+			Stream_Write_UINT32(output, info->ftCreationTime.dwHighDateTime);   /* CreationTime */
+			Stream_Write_UINT32(output, info->ftLastAccessTime.dwLowDateTime);  /* LastAccessTime */
+			Stream_Write_UINT32(output, info->ftLastAccessTime.dwHighDateTime); /* LastAccessTime */
+			Stream_Write_UINT32(output, info->ftLastWriteTime.dwLowDateTime);   /* LastWriteTime */
+			Stream_Write_UINT32(output, info->ftLastWriteTime.dwHighDateTime);  /* LastWriteTime */
+			Stream_Write_UINT32(output, info->ftLastWriteTime.dwLowDateTime);   /* ChangeTime */
+			Stream_Write_UINT32(output, info->ftLastWriteTime.dwHighDateTime);  /* ChangeTime */
+			Stream_Write_UINT32(output, info->dwFileAttributes);                /* FileAttributes */
 			/* Reserved(4), MUST NOT be added! */
 			break;
 
@@ -512,16 +475,16 @@ BOOL drive_file_query_information(DRIVE_FILE* file, UINT32 FsInformationClass, w
 
 			/*  http://msdn.microsoft.com/en-us/library/cc232088.aspx */
 			if (!Stream_EnsureRemainingCapacity(output, 4 + 22))
-				goto out_fail;
+				return FALSE;
 
-			Stream_Write_UINT32(output, 22);                             /* Length */
-			Stream_Write_UINT32(output, fileInformation.nFileSizeLow);   /* AllocationSize */
-			Stream_Write_UINT32(output, fileInformation.nFileSizeHigh);  /* AllocationSize */
-			Stream_Write_UINT32(output, fileInformation.nFileSizeLow);   /* EndOfFile */
-			Stream_Write_UINT32(output, fileInformation.nFileSizeHigh);  /* EndOfFile */
-			Stream_Write_UINT32(output, fileInformation.nNumberOfLinks); /* NumberOfLinks */
-			Stream_Write_UINT8(output, file->delete_pending ? 1 : 0);    /* DeletePending */
-			Stream_Write_UINT8(output, fileInformation.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY
+			Stream_Write_UINT32(output, 22);                          /* Length */
+			Stream_Write_UINT32(output, info->nFileSizeLow);          /* AllocationSize */
+			Stream_Write_UINT32(output, info->nFileSizeHigh);         /* AllocationSize */
+			Stream_Write_UINT32(output, info->nFileSizeLow);          /* EndOfFile */
+			Stream_Write_UINT32(output, info->nFileSizeHigh);         /* EndOfFile */
+			Stream_Write_UINT32(output, info->nNumberOfLinks);        /* NumberOfLinks */
+			Stream_Write_UINT8(output, file->delete_pending ? 1 : 0); /* DeletePending */
+			Stream_Write_UINT8(output, info->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY
 			                               ? TRUE
 			                               : FALSE); /* Directory */
 			/* Reserved(2), MUST NOT be added! */
@@ -531,17 +494,119 @@ BOOL drive_file_query_information(DRIVE_FILE* file, UINT32 FsInformationClass, w
 
 			/* http://msdn.microsoft.com/en-us/library/cc232093.aspx */
 			if (!Stream_EnsureRemainingCapacity(output, 4 + 8))
-				goto out_fail;
+				return FALSE;
 
-			Stream_Write_UINT32(output, 8);                                /* Length */
-			Stream_Write_UINT32(output, fileInformation.dwFileAttributes); /* FileAttributes */
-			Stream_Write_UINT32(output, 0);                                /* ReparseTag */
+			Stream_Write_UINT32(output, 8);                      /* Length */
+			Stream_Write_UINT32(output, info->dwFileAttributes); /* FileAttributes */
+			Stream_Write_UINT32(output, 0);                      /* ReparseTag */
 			break;
 
 		default:
 			/* Unhandled FsInformationClass */
-			goto out_fail;
+			return FALSE;
 	}
+
+	return TRUE;
+}
+
+static BOOL drive_file_query_from_attributes(const DRIVE_FILE* file,
+                                             const WIN32_FILE_ATTRIBUTE_DATA* attrib,
+                                             UINT32 FsInformationClass, wStream* output)
+{
+	switch (FsInformationClass)
+	{
+		case FileBasicInformation:
+
+			/* http://msdn.microsoft.com/en-us/library/cc232094.aspx */
+			if (!Stream_EnsureRemainingCapacity(output, 4 + 36))
+				return FALSE;
+
+			Stream_Write_UINT32(output, 36);                                    /* Length */
+			Stream_Write_UINT32(output, attrib->ftCreationTime.dwLowDateTime);  /* CreationTime */
+			Stream_Write_UINT32(output, attrib->ftCreationTime.dwHighDateTime); /* CreationTime */
+			Stream_Write_UINT32(output,
+			                    attrib->ftLastAccessTime.dwLowDateTime); /* LastAccessTime */
+			Stream_Write_UINT32(output,
+			                    attrib->ftLastAccessTime.dwHighDateTime);       /* LastAccessTime */
+			Stream_Write_UINT32(output, attrib->ftLastWriteTime.dwLowDateTime); /* LastWriteTime */
+			Stream_Write_UINT32(output, attrib->ftLastWriteTime.dwHighDateTime); /* LastWriteTime */
+			Stream_Write_UINT32(output, attrib->ftLastWriteTime.dwLowDateTime);  /* ChangeTime */
+			Stream_Write_UINT32(output, attrib->ftLastWriteTime.dwHighDateTime); /* ChangeTime */
+			Stream_Write_UINT32(output, attrib->dwFileAttributes); /* FileAttributes */
+			/* Reserved(4), MUST NOT be added! */
+			break;
+
+		case FileStandardInformation:
+
+			/*  http://msdn.microsoft.com/en-us/library/cc232088.aspx */
+			if (!Stream_EnsureRemainingCapacity(output, 4 + 22))
+				return FALSE;
+
+			Stream_Write_UINT32(output, 22);                          /* Length */
+			Stream_Write_UINT32(output, attrib->nFileSizeLow);        /* AllocationSize */
+			Stream_Write_UINT32(output, attrib->nFileSizeHigh);       /* AllocationSize */
+			Stream_Write_UINT32(output, attrib->nFileSizeLow);        /* EndOfFile */
+			Stream_Write_UINT32(output, attrib->nFileSizeHigh);       /* EndOfFile */
+			Stream_Write_UINT32(output, 0);                           /* NumberOfLinks */
+			Stream_Write_UINT8(output, file->delete_pending ? 1 : 0); /* DeletePending */
+			Stream_Write_UINT8(output, attrib->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY
+			                               ? TRUE
+			                               : FALSE); /* Directory */
+			/* Reserved(2), MUST NOT be added! */
+			break;
+
+		case FileAttributeTagInformation:
+
+			/* http://msdn.microsoft.com/en-us/library/cc232093.aspx */
+			if (!Stream_EnsureRemainingCapacity(output, 4 + 8))
+				return FALSE;
+
+			Stream_Write_UINT32(output, 8);                        /* Length */
+			Stream_Write_UINT32(output, attrib->dwFileAttributes); /* FileAttributes */
+			Stream_Write_UINT32(output, 0);                        /* ReparseTag */
+			break;
+
+		default:
+			/* Unhandled FsInformationClass */
+			return FALSE;
+	}
+
+	return TRUE;
+}
+
+BOOL drive_file_query_information(DRIVE_FILE* file, UINT32 FsInformationClass, wStream* output)
+{
+	BY_HANDLE_FILE_INFORMATION fileInformation = { 0 };
+	BOOL status = 0;
+	HANDLE hFile = NULL;
+
+	if (!file || !output)
+		return FALSE;
+
+	hFile = CreateFileW(file->fullpath, 0, FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+	                    FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile != INVALID_HANDLE_VALUE)
+	{
+		status = GetFileInformationByHandle(hFile, &fileInformation);
+		(void)CloseHandle(hFile);
+		if (!status)
+			goto out_fail;
+
+		if (!drive_file_query_from_handle_information(file, &fileInformation, FsInformationClass,
+		                                              output))
+			goto out_fail;
+
+		return TRUE;
+	}
+
+	/* If we failed before (i.e. if information for a drive is queried) fall back to
+	 * GetFileAttributesExW */
+	WIN32_FILE_ATTRIBUTE_DATA fileAttributes = { 0 };
+	if (!GetFileAttributesExW(file->fullpath, GetFileExInfoStandard, &fileAttributes))
+		goto out_fail;
+
+	if (!drive_file_query_from_attributes(file, &fileAttributes, FsInformationClass, output))
+		goto out_fail;
 
 	return TRUE;
 out_fail:
@@ -552,24 +617,23 @@ out_fail:
 BOOL drive_file_set_information(DRIVE_FILE* file, UINT32 FsInformationClass, UINT32 Length,
                                 wStream* input)
 {
-	INT64 size;
-	WCHAR* fullpath;
-	ULARGE_INTEGER liCreationTime;
-	ULARGE_INTEGER liLastAccessTime;
-	ULARGE_INTEGER liLastWriteTime;
-	ULARGE_INTEGER liChangeTime;
+	INT64 size = 0;
+	ULARGE_INTEGER liCreationTime = { 0 };
+	ULARGE_INTEGER liLastAccessTime = { 0 };
+	ULARGE_INTEGER liLastWriteTime = { 0 };
+	ULARGE_INTEGER liChangeTime = { 0 };
 	FILETIME ftCreationTime;
 	FILETIME ftLastAccessTime;
 	FILETIME ftLastWriteTime;
 	FILETIME* pftCreationTime = NULL;
 	FILETIME* pftLastAccessTime = NULL;
 	FILETIME* pftLastWriteTime = NULL;
-	UINT32 FileAttributes;
-	UINT32 FileNameLength;
-	LARGE_INTEGER liSize;
-	UINT8 delete_pending;
-	UINT8 ReplaceIfExists;
-	DWORD attr;
+	UINT32 FileAttributes = 0;
+	UINT32 FileNameLength = 0;
+	LARGE_INTEGER liSize = { 0 };
+	UINT8 delete_pending = 0;
+	UINT8 ReplaceIfExists = 0;
+	DWORD attr = 0;
 
 	if (!file || !input)
 		return FALSE;
@@ -658,8 +722,8 @@ BOOL drive_file_set_information(DRIVE_FILE* file, UINT32 FsInformationClass, UIN
 
 			if (!SetFilePointerEx(file->file_handle, liSize, NULL, FILE_BEGIN))
 			{
-				WLog_ERR(TAG, "Unable to truncate %s to %d (%" PRId32 ")", file->fullpath, size,
-				         GetLastError());
+				WLog_ERR(TAG, "Unable to truncate %s to %" PRId64 " (%" PRId32 ")", file->fullpath,
+				         size, GetLastError());
 				return FALSE;
 			}
 
@@ -667,8 +731,8 @@ BOOL drive_file_set_information(DRIVE_FILE* file, UINT32 FsInformationClass, UIN
 
 			if (SetEndOfFile(file->file_handle) == 0)
 			{
-				WLog_ERR(TAG, "Unable to truncate %s to %d (%" PRId32 ")", file->fullpath, size,
-				         GetLastError());
+				WLog_ERR(TAG, "Unable to truncate %s to %" PRId64 " (%" PRId32 ")", file->fullpath,
+				         size, GetLastError());
 				return FALSE;
 			}
 
@@ -707,6 +771,7 @@ BOOL drive_file_set_information(DRIVE_FILE* file, UINT32 FsInformationClass, UIN
 			break;
 
 		case FileRenameInformation:
+		{
 			if (!Stream_CheckAndLogRequiredLength(TAG, input, 6))
 				return FALSE;
 
@@ -718,20 +783,17 @@ BOOL drive_file_set_information(DRIVE_FILE* file, UINT32 FsInformationClass, UIN
 			if (!Stream_CheckAndLogRequiredLength(TAG, input, FileNameLength))
 				return FALSE;
 
-			fullpath = drive_file_combine_fullpath(file->basepath, (WCHAR*)Stream_Pointer(input),
-			                                       FileNameLength);
+			WCHAR* fullpath = drive_file_combine_fullpath(
+			    file->basepath, Stream_ConstPointer(input), FileNameLength / sizeof(WCHAR));
 
 			if (!fullpath)
-			{
-				WLog_ERR(TAG, "drive_file_combine_fullpath failed!");
 				return FALSE;
-			}
 
 #ifdef _WIN32
 
 			if (file->file_handle != INVALID_HANDLE_VALUE)
 			{
-				CloseHandle(file->file_handle);
+				(void)CloseHandle(file->file_handle);
 				file->file_handle = INVALID_HANDLE_VALUE;
 			}
 
@@ -742,7 +804,9 @@ BOOL drive_file_set_information(DRIVE_FILE* file, UINT32 FsInformationClass, UIN
 			                MOVEFILE_COPY_ALLOWED |
 			                    (ReplaceIfExists ? MOVEFILE_REPLACE_EXISTING : 0)))
 			{
-				if (!drive_file_set_fullpath(file, fullpath))
+				const BOOL rc = drive_file_set_fullpath(file, fullpath);
+				free(fullpath);
+				if (!rc)
 					return FALSE;
 			}
 			else
@@ -754,7 +818,8 @@ BOOL drive_file_set_information(DRIVE_FILE* file, UINT32 FsInformationClass, UIN
 #ifdef _WIN32
 			drive_file_init(file);
 #endif
-			break;
+		}
+		break;
 
 		default:
 			return FALSE;
@@ -763,11 +828,139 @@ BOOL drive_file_set_information(DRIVE_FILE* file, UINT32 FsInformationClass, UIN
 	return TRUE;
 }
 
-BOOL drive_file_query_directory(DRIVE_FILE* file, UINT32 FsInformationClass, BYTE InitialQuery,
-                                const WCHAR* path, UINT32 PathLength, wStream* output)
+static BOOL drive_file_query_dir_info(DRIVE_FILE* file, wStream* output, size_t length)
 {
-	size_t length;
-	WCHAR* ent_path;
+	WINPR_ASSERT(file);
+	WINPR_ASSERT(output);
+
+	/* http://msdn.microsoft.com/en-us/library/cc232097.aspx */
+	if (!Stream_EnsureRemainingCapacity(output, 4 + 64 + length))
+		return FALSE;
+
+	if (length > UINT32_MAX - 64)
+		return FALSE;
+
+	Stream_Write_UINT32(output, (UINT32)(64 + length));                        /* Length */
+	Stream_Write_UINT32(output, 0);                                            /* NextEntryOffset */
+	Stream_Write_UINT32(output, 0);                                            /* FileIndex */
+	Stream_Write_UINT32(output, file->find_data.ftCreationTime.dwLowDateTime); /* CreationTime */
+	Stream_Write_UINT32(output, file->find_data.ftCreationTime.dwHighDateTime); /* CreationTime */
+	Stream_Write_UINT32(output,
+	                    file->find_data.ftLastAccessTime.dwLowDateTime); /* LastAccessTime */
+	Stream_Write_UINT32(output,
+	                    file->find_data.ftLastAccessTime.dwHighDateTime);       /* LastAccessTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwLowDateTime); /* LastWriteTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwHighDateTime); /* LastWriteTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwLowDateTime);  /* ChangeTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwHighDateTime); /* ChangeTime */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeLow);                   /* EndOfFile */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);                  /* EndOfFile */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeLow);     /* AllocationSize */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);    /* AllocationSize */
+	Stream_Write_UINT32(output, file->find_data.dwFileAttributes); /* FileAttributes */
+	Stream_Write_UINT32(output, (UINT32)length);                   /* FileNameLength */
+	Stream_Write(output, file->find_data.cFileName, length);
+	return TRUE;
+}
+
+static BOOL drive_file_query_full_dir_info(DRIVE_FILE* file, wStream* output, size_t length)
+{
+	WINPR_ASSERT(file);
+	WINPR_ASSERT(output);
+	/* http://msdn.microsoft.com/en-us/library/cc232068.aspx */
+	if (!Stream_EnsureRemainingCapacity(output, 4 + 68 + length))
+		return FALSE;
+
+	if (length > UINT32_MAX - 68)
+		return FALSE;
+
+	Stream_Write_UINT32(output, (UINT32)(68 + length));                        /* Length */
+	Stream_Write_UINT32(output, 0);                                            /* NextEntryOffset */
+	Stream_Write_UINT32(output, 0);                                            /* FileIndex */
+	Stream_Write_UINT32(output, file->find_data.ftCreationTime.dwLowDateTime); /* CreationTime */
+	Stream_Write_UINT32(output, file->find_data.ftCreationTime.dwHighDateTime); /* CreationTime */
+	Stream_Write_UINT32(output,
+	                    file->find_data.ftLastAccessTime.dwLowDateTime); /* LastAccessTime */
+	Stream_Write_UINT32(output,
+	                    file->find_data.ftLastAccessTime.dwHighDateTime);       /* LastAccessTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwLowDateTime); /* LastWriteTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwHighDateTime); /* LastWriteTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwLowDateTime);  /* ChangeTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwHighDateTime); /* ChangeTime */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeLow);                   /* EndOfFile */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);                  /* EndOfFile */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeLow);     /* AllocationSize */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);    /* AllocationSize */
+	Stream_Write_UINT32(output, file->find_data.dwFileAttributes); /* FileAttributes */
+	Stream_Write_UINT32(output, (UINT32)length);                   /* FileNameLength */
+	Stream_Write_UINT32(output, 0);                                /* EaSize */
+	Stream_Write(output, file->find_data.cFileName, length);
+	return TRUE;
+}
+
+static BOOL drive_file_query_both_dir_info(DRIVE_FILE* file, wStream* output, size_t length)
+{
+	WINPR_ASSERT(file);
+	WINPR_ASSERT(output);
+	/* http://msdn.microsoft.com/en-us/library/cc232095.aspx */
+	if (!Stream_EnsureRemainingCapacity(output, 4 + 93 + length))
+		return FALSE;
+
+	if (length > UINT32_MAX - 93)
+		return FALSE;
+
+	Stream_Write_UINT32(output, (UINT32)(93 + length));                        /* Length */
+	Stream_Write_UINT32(output, 0);                                            /* NextEntryOffset */
+	Stream_Write_UINT32(output, 0);                                            /* FileIndex */
+	Stream_Write_UINT32(output, file->find_data.ftCreationTime.dwLowDateTime); /* CreationTime */
+	Stream_Write_UINT32(output, file->find_data.ftCreationTime.dwHighDateTime); /* CreationTime */
+	Stream_Write_UINT32(output,
+	                    file->find_data.ftLastAccessTime.dwLowDateTime); /* LastAccessTime */
+	Stream_Write_UINT32(output,
+	                    file->find_data.ftLastAccessTime.dwHighDateTime);       /* LastAccessTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwLowDateTime); /* LastWriteTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwHighDateTime); /* LastWriteTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwLowDateTime);  /* ChangeTime */
+	Stream_Write_UINT32(output, file->find_data.ftLastWriteTime.dwHighDateTime); /* ChangeTime */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeLow);                   /* EndOfFile */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);                  /* EndOfFile */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeLow);     /* AllocationSize */
+	Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);    /* AllocationSize */
+	Stream_Write_UINT32(output, file->find_data.dwFileAttributes); /* FileAttributes */
+	Stream_Write_UINT32(output, (UINT32)length);                   /* FileNameLength */
+	Stream_Write_UINT32(output, 0);                                /* EaSize */
+	Stream_Write_UINT8(output, 0);                                 /* ShortNameLength */
+	/* Reserved(1), MUST NOT be added! */
+	Stream_Zero(output, 24); /* ShortName */
+	Stream_Write(output, file->find_data.cFileName, length);
+	return TRUE;
+}
+
+static BOOL drive_file_query_names_info(DRIVE_FILE* file, wStream* output, size_t length)
+{
+	WINPR_ASSERT(file);
+	WINPR_ASSERT(output);
+	/* http://msdn.microsoft.com/en-us/library/cc232077.aspx */
+	if (!Stream_EnsureRemainingCapacity(output, 4 + 12 + length))
+		return FALSE;
+
+	if (length > UINT32_MAX - 12)
+		return FALSE;
+
+	Stream_Write_UINT32(output, (UINT32)(12 + length)); /* Length */
+	Stream_Write_UINT32(output, 0);                     /* NextEntryOffset */
+	Stream_Write_UINT32(output, 0);                     /* FileIndex */
+	Stream_Write_UINT32(output, (UINT32)length);        /* FileNameLength */
+	Stream_Write(output, file->find_data.cFileName, length);
+	return TRUE;
+}
+
+BOOL drive_file_query_directory(DRIVE_FILE* file, UINT32 FsInformationClass, BYTE InitialQuery,
+                                const WCHAR* path, UINT32 PathWCharLength, wStream* output)
+{
+	BOOL rc = FALSE;
+	size_t length = 0;
+	WCHAR* ent_path = NULL;
 
 	if (!file || !path || !output)
 		return FALSE;
@@ -778,7 +971,7 @@ BOOL drive_file_query_directory(DRIVE_FILE* file, UINT32 FsInformationClass, BYT
 		if (file->find_handle != INVALID_HANDLE_VALUE)
 			FindClose(file->find_handle);
 
-		ent_path = drive_file_combine_fullpath(file->basepath, path, PathLength);
+		ent_path = drive_file_combine_fullpath(file->basepath, path, PathWCharLength);
 		/* open new search handle and retrieve the first entry */
 		file->find_handle = FindFirstFileW(ent_path, &file->find_data);
 		free(ent_path);
@@ -794,135 +987,19 @@ BOOL drive_file_query_directory(DRIVE_FILE* file, UINT32 FsInformationClass, BYT
 	switch (FsInformationClass)
 	{
 		case FileDirectoryInformation:
-
-			/* http://msdn.microsoft.com/en-us/library/cc232097.aspx */
-			if (!Stream_EnsureRemainingCapacity(output, 4 + 64 + length))
-				goto out_fail;
-
-			if (length > UINT32_MAX - 64)
-				goto out_fail;
-
-			Stream_Write_UINT32(output, (UINT32)(64 + length)); /* Length */
-			Stream_Write_UINT32(output, 0);                     /* NextEntryOffset */
-			Stream_Write_UINT32(output, 0);                     /* FileIndex */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftCreationTime.dwLowDateTime); /* CreationTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftCreationTime.dwHighDateTime); /* CreationTime */
-			Stream_Write_UINT32(
-			    output, file->find_data.ftLastAccessTime.dwLowDateTime); /* LastAccessTime */
-			Stream_Write_UINT32(
-			    output, file->find_data.ftLastAccessTime.dwHighDateTime); /* LastAccessTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwLowDateTime); /* LastWriteTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwHighDateTime); /* LastWriteTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwLowDateTime); /* ChangeTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwHighDateTime); /* ChangeTime */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeLow);           /* EndOfFile */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);          /* EndOfFile */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeLow);     /* AllocationSize */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);    /* AllocationSize */
-			Stream_Write_UINT32(output, file->find_data.dwFileAttributes); /* FileAttributes */
-			Stream_Write_UINT32(output, (UINT32)length);                   /* FileNameLength */
-			Stream_Write(output, file->find_data.cFileName, length);
+			rc = drive_file_query_dir_info(file, output, length);
 			break;
 
 		case FileFullDirectoryInformation:
-
-			/* http://msdn.microsoft.com/en-us/library/cc232068.aspx */
-			if (!Stream_EnsureRemainingCapacity(output, 4 + 68 + length))
-				goto out_fail;
-
-			if (length > UINT32_MAX - 68)
-				goto out_fail;
-
-			Stream_Write_UINT32(output, (UINT32)(68 + length)); /* Length */
-			Stream_Write_UINT32(output, 0);                     /* NextEntryOffset */
-			Stream_Write_UINT32(output, 0);                     /* FileIndex */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftCreationTime.dwLowDateTime); /* CreationTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftCreationTime.dwHighDateTime); /* CreationTime */
-			Stream_Write_UINT32(
-			    output, file->find_data.ftLastAccessTime.dwLowDateTime); /* LastAccessTime */
-			Stream_Write_UINT32(
-			    output, file->find_data.ftLastAccessTime.dwHighDateTime); /* LastAccessTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwLowDateTime); /* LastWriteTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwHighDateTime); /* LastWriteTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwLowDateTime); /* ChangeTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwHighDateTime); /* ChangeTime */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeLow);           /* EndOfFile */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);          /* EndOfFile */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeLow);     /* AllocationSize */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);    /* AllocationSize */
-			Stream_Write_UINT32(output, file->find_data.dwFileAttributes); /* FileAttributes */
-			Stream_Write_UINT32(output, (UINT32)length);                   /* FileNameLength */
-			Stream_Write_UINT32(output, 0);                                /* EaSize */
-			Stream_Write(output, file->find_data.cFileName, length);
+			rc = drive_file_query_full_dir_info(file, output, length);
 			break;
 
 		case FileBothDirectoryInformation:
-
-			/* http://msdn.microsoft.com/en-us/library/cc232095.aspx */
-			if (!Stream_EnsureRemainingCapacity(output, 4 + 93 + length))
-				goto out_fail;
-
-			if (length > UINT32_MAX - 93)
-				goto out_fail;
-
-			Stream_Write_UINT32(output, (UINT32)(93 + length)); /* Length */
-			Stream_Write_UINT32(output, 0);                     /* NextEntryOffset */
-			Stream_Write_UINT32(output, 0);                     /* FileIndex */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftCreationTime.dwLowDateTime); /* CreationTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftCreationTime.dwHighDateTime); /* CreationTime */
-			Stream_Write_UINT32(
-			    output, file->find_data.ftLastAccessTime.dwLowDateTime); /* LastAccessTime */
-			Stream_Write_UINT32(
-			    output, file->find_data.ftLastAccessTime.dwHighDateTime); /* LastAccessTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwLowDateTime); /* LastWriteTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwHighDateTime); /* LastWriteTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwLowDateTime); /* ChangeTime */
-			Stream_Write_UINT32(output,
-			                    file->find_data.ftLastWriteTime.dwHighDateTime); /* ChangeTime */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeLow);           /* EndOfFile */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);          /* EndOfFile */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeLow);     /* AllocationSize */
-			Stream_Write_UINT32(output, file->find_data.nFileSizeHigh);    /* AllocationSize */
-			Stream_Write_UINT32(output, file->find_data.dwFileAttributes); /* FileAttributes */
-			Stream_Write_UINT32(output, (UINT32)length);                   /* FileNameLength */
-			Stream_Write_UINT32(output, 0);                                /* EaSize */
-			Stream_Write_UINT8(output, 0);                                 /* ShortNameLength */
-			/* Reserved(1), MUST NOT be added! */
-			Stream_Zero(output, 24); /* ShortName */
-			Stream_Write(output, file->find_data.cFileName, length);
+			rc = drive_file_query_both_dir_info(file, output, length);
 			break;
 
 		case FileNamesInformation:
-
-			/* http://msdn.microsoft.com/en-us/library/cc232077.aspx */
-			if (!Stream_EnsureRemainingCapacity(output, 4 + 12 + length))
-				goto out_fail;
-
-			if (length > UINT32_MAX - 12)
-				goto out_fail;
-
-			Stream_Write_UINT32(output, (UINT32)(12 + length)); /* Length */
-			Stream_Write_UINT32(output, 0);                     /* NextEntryOffset */
-			Stream_Write_UINT32(output, 0);                     /* FileIndex */
-			Stream_Write_UINT32(output, (UINT32)length);        /* FileNameLength */
-			Stream_Write(output, file->find_data.cFileName, length);
+			rc = drive_file_query_names_info(file, output, length);
 			break;
 
 		default:
@@ -931,9 +1008,11 @@ BOOL drive_file_query_directory(DRIVE_FILE* file, UINT32 FsInformationClass, BYT
 			goto out_fail;
 	}
 
-	return TRUE;
 out_fail:
-	Stream_Write_UINT32(output, 0); /* Length */
-	Stream_Write_UINT8(output, 0);  /* Padding */
-	return FALSE;
+	if (!rc)
+	{
+		Stream_Write_UINT32(output, 0); /* Length */
+		Stream_Write_UINT8(output, 0);  /* Padding */
+	}
+	return rc;
 }

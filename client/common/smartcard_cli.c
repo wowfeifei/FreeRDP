@@ -24,33 +24,37 @@
 
 BOOL freerdp_smartcard_list(const rdpSettings* settings)
 {
-	SmartcardCerts* certs = NULL;
-	DWORD i, count;
+	SmartcardCertInfo** certs = NULL;
+	size_t count = 0;
 
-	if (!smartcard_enumerateCerts(settings, &certs, &count))
+	if (!smartcard_enumerateCerts(settings, &certs, &count, FALSE))
 		return FALSE;
 
-	for (i = 0; i < count; i++)
+	printf("smartcard reader detected, listing %" PRIuz " certificates:\n", count);
+	for (size_t i = 0; i < count; i++)
 	{
-		const SmartcardCertInfo* info = smartcard_getCertInfo(certs, i);
-		char readerName[256] = { 0 };
+		const SmartcardCertInfo* info = certs[i];
+		char asciiStr[256] = { 0 };
 
 		WINPR_ASSERT(info);
 
-		printf("%d: %s\n", i, info->subject);
+		printf("%" PRIuz ": %s\n", i, info->subject);
 
-		if (WideCharToMultiByte(CP_UTF8, 0, info->reader, -1, readerName, sizeof(readerName), NULL,
-		                        NULL) > 0)
-			printf("\t* reader: %s\n", readerName);
+		if (ConvertWCharToUtf8(info->csp, asciiStr, ARRAYSIZE(asciiStr)))
+			printf("\t* CSP: %s\n", asciiStr);
+
+		if (ConvertWCharToUtf8(info->reader, asciiStr, ARRAYSIZE(asciiStr)))
+			printf("\t* reader: %s\n", asciiStr);
 #ifndef _WIN32
 		printf("\t* slotId: %" PRIu32 "\n", info->slotId);
 		printf("\t* pkinitArgs: %s\n", info->pkinitArgs);
 #endif
-		printf("\t* containerName: %s\n", info->containerName);
+		if (ConvertWCharToUtf8(info->containerName, asciiStr, ARRAYSIZE(asciiStr)))
+			printf("\t* containerName: %s\n", asciiStr);
 		if (info->upn)
 			printf("\t* UPN: %s\n", info->upn);
 	}
-	smartcardCerts_Free(certs);
+	smartcardCertList_Free(certs, count);
 
 	return TRUE;
 }

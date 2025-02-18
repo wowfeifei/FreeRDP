@@ -24,7 +24,10 @@ public abstract class ClipboardManagerProxy
 
 	public abstract void removeClipboardboardChangedListener(OnClipboardChangedListener listener);
 
-	public static interface OnClipboardChangedListener {
+	public abstract void getPrimaryClipManually();
+
+	public interface OnClipboardChangedListener
+	{
 		void onClipboardChanged(String data);
 	}
 
@@ -47,13 +50,17 @@ public abstract class ClipboardManagerProxy
 		public void removeClipboardboardChangedListener(OnClipboardChangedListener listener)
 		{
 		}
+
+		@Override public void getPrimaryClipManually()
+		{
+		}
 	}
 
 	@TargetApi(11)
 	private static class HCClipboardManager
 	    extends ClipboardManagerProxy implements ClipboardManager.OnPrimaryClipChangedListener
 	{
-		private ClipboardManager mClipboardManager;
+		private final ClipboardManager mClipboardManager;
 		private OnClipboardChangedListener mListener;
 
 		public HCClipboardManager(Context ctx)
@@ -95,6 +102,11 @@ public abstract class ClipboardManagerProxy
 		{
 			mListener = null;
 			mClipboardManager.removePrimaryClipChangedListener(this);
+		}
+
+		@Override public void getPrimaryClipManually()
+		{
+			onPrimaryClipChanged();
 		}
 	}
 }

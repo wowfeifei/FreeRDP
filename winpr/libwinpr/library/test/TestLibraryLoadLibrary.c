@@ -5,18 +5,22 @@
 #include <winpr/tchar.h>
 #include <winpr/windows.h>
 #include <winpr/library.h>
+#include <winpr/nt.h>
 
 int TestLibraryLoadLibrary(int argc, char* argv[])
 {
-	HINSTANCE library;
-	LPCSTR SharedLibraryExtension;
-	CHAR LibraryPath[PATHCCH_MAX_CCH];
-	PCHAR p;
+	HINSTANCE library = NULL;
+	LPCSTR SharedLibraryExtension = NULL;
+	CHAR LibraryPath[PATHCCH_MAX_CCH] = { 0 };
+	PCHAR p = NULL;
 	WINPR_UNUSED(argc);
 	WINPR_UNUSED(argv);
 	if (!GetModuleFileNameA(NULL, LibraryPath, PATHCCH_MAX_CCH))
 	{
-		printf("%s: GetModuleFilenameA failed: 0x%08" PRIX32 "\n", __FUNCTION__, GetLastError());
+		const UINT32 err = GetLastError();
+		const HRESULT herr = HRESULT_FROM_WIN32(err);
+		printf("%s: GetModuleFilenameA failed: %s - %s [0x%08" PRIX32 "]\n", __func__,
+		       NtStatus2Tag(herr), Win32ErrorCode2Tag(err), err);
 		return -1;
 	}
 
@@ -24,7 +28,7 @@ int TestLibraryLoadLibrary(int argc, char* argv[])
 
 	if (!(p = strrchr(LibraryPath, PathGetSeparatorA(PATH_STYLE_NATIVE))))
 	{
-		printf("%s: Error identifying module directory path\n", __FUNCTION__);
+		printf("%s: Error identifying module directory path\n", __func__);
 		return -1;
 	}
 	*p = 0;
@@ -33,17 +37,23 @@ int TestLibraryLoadLibrary(int argc, char* argv[])
 	SharedLibraryExtension = PathGetSharedLibraryExtensionA(PATH_SHARED_LIB_EXT_WITH_DOT);
 	NativePathCchAddExtensionA(LibraryPath, PATHCCH_MAX_CCH, SharedLibraryExtension);
 
-	printf("%s: Loading Library: '%s'\n", __FUNCTION__, LibraryPath);
+	printf("%s: Loading Library: '%s'\n", __func__, LibraryPath);
 
 	if (!(library = LoadLibraryA(LibraryPath)))
 	{
-		printf("%s: LoadLibraryA failure: 0x%08" PRIX32 "\n", __FUNCTION__, GetLastError());
+		const UINT32 err = GetLastError();
+		const HRESULT herr = HRESULT_FROM_WIN32(err);
+		printf("%s: LoadLibraryA failure: %s - %s [0x%08" PRIX32 "]\n", __func__,
+		       NtStatus2Tag(herr), Win32ErrorCode2Tag(err), err);
 		return -1;
 	}
 
 	if (!FreeLibrary(library))
 	{
-		printf("%s: FreeLibrary failure: 0x%08" PRIX32 "\n", __FUNCTION__, GetLastError());
+		const UINT32 err = GetLastError();
+		const HRESULT herr = HRESULT_FROM_WIN32(err);
+		printf("%s: FreeLibrary failure: %s - %s [0x%08" PRIX32 "]\n", __func__, NtStatus2Tag(herr),
+		       Win32ErrorCode2Tag(err), err);
 		return -1;
 	}
 

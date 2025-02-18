@@ -20,8 +20,10 @@
  */
 #include <freerdp/config.h>
 
+#include <winpr/winpr.h>
 #include <winpr/library.h>
 #include <winpr/assert.h>
+#include <winpr/cast.h>
 
 #include <freerdp/log.h>
 #include <freerdp/codec/h264.h>
@@ -63,25 +65,29 @@ static const char* openh264_library_names[] = {
 #elif defined(__APPLE__)
 	"libopenh264.dylib"
 #else
-	"libopenh264.so"
+	"libopenh264.so.7",     "libopenh264.so.2.5.0", "libopenh264.so.2.4.1", "libopenh264.so.2.4.0",
+	"libopenh264.so.2.3.1", "libopenh264.so.2.3.0", "libopenh264.so",
+
 #endif
 };
 #endif
 
-static void openh264_trace_callback(H264_CONTEXT* h264, int level, const char* message)
+static void openh264_trace_callback(void* ctx, int level, const char* message)
 {
+	H264_CONTEXT* h264 = ctx;
 	if (h264)
 		WLog_Print(h264->log, WLOG_TRACE, "%d - %s", level, message);
 }
 
-static int openh264_decompress(H264_CONTEXT* h264, const BYTE* pSrcData, UINT32 SrcSize)
+static int openh264_decompress(H264_CONTEXT* WINPR_RESTRICT h264,
+                               const BYTE* WINPR_RESTRICT pSrcData, UINT32 SrcSize)
 {
-	DECODING_STATE state;
+	DECODING_STATE state = dsInvalidArgument;
 	SBufferInfo sBufferInfo = { 0 };
-	SSysMEMBuffer* pSystemBuffer;
-	H264_CONTEXT_OPENH264* sys;
-	UINT32* iStride;
-	BYTE** pYUVData;
+	SSysMEMBuffer* pSystemBuffer = NULL;
+	H264_CONTEXT_OPENH264* sys = NULL;
+	UINT32* iStride = NULL;
+	BYTE** pYUVData = NULL;
 
 	WINPR_ASSERT(h264);
 	WINPR_ASSERT(pSrcData || (SrcSize == 0));
@@ -106,8 +112,9 @@ static int openh264_decompress(H264_CONTEXT* h264, const BYTE* pSrcData, UINT32 
 	pYUVData[2] = NULL;
 
 	WINPR_ASSERT(sys->pDecoder);
-	state =
-	    (*sys->pDecoder)->DecodeFrame2(sys->pDecoder, pSrcData, SrcSize, pYUVData, &sBufferInfo);
+	state = (*sys->pDecoder)
+	            ->DecodeFrame2(sys->pDecoder, pSrcData, WINPR_ASSERTING_INT_CAST(int, SrcSize),
+	                           pYUVData, &sBufferInfo);
 
 	if (sBufferInfo.iBufferStatus != 1)
 	{
@@ -145,9 +152,9 @@ static int openh264_decompress(H264_CONTEXT* h264, const BYTE* pSrcData, UINT32 
 #endif
 
 	pSystemBuffer = &sBufferInfo.UsrData.sSystemBuffer;
-	iStride[0] = pSystemBuffer->iStride[0];
-	iStride[1] = pSystemBuffer->iStride[1];
-	iStride[2] = pSystemBuffer->iStride[1];
+	iStride[0] = WINPR_ASSERTING_INT_CAST(uint32_t, pSystemBuffer->iStride[0]);
+	iStride[1] = WINPR_ASSERTING_INT_CAST(uint32_t, pSystemBuffer->iStride[1]);
+	iStride[2] = WINPR_ASSERTING_INT_CAST(uint32_t, pSystemBuffer->iStride[1]);
 
 	if (sBufferInfo.iBufferStatus != 1)
 	{
@@ -179,15 +186,16 @@ static int openh264_decompress(H264_CONTEXT* h264, const BYTE* pSrcData, UINT32 
 	return 1;
 }
 
-static int openh264_compress(H264_CONTEXT* h264, const BYTE** pYUVData, const UINT32* iStride,
-                             BYTE** ppDstData, UINT32* pDstSize)
+static int openh264_compress(H264_CONTEXT* WINPR_RESTRICT h264,
+                             const BYTE** WINPR_RESTRICT pYUVData,
+                             const UINT32* WINPR_RESTRICT iStride, BYTE** WINPR_RESTRICT ppDstData,
+                             UINT32* WINPR_RESTRICT pDstSize)
 {
-	int i, j;
-	int status;
+	int status = 0;
 	SFrameBSInfo info = { 0 };
 	SSourcePicture pic = { 0 };
 
-	H264_CONTEXT_OPENH264* sys;
+	H264_CONTEXT_OPENH264* sys = NULL;
 
 	WINPR_ASSERT(h264);
 	WINPR_ASSERT(pYUVData);
@@ -225,17 +233,36 @@ static int openh264_compress(H264_CONTEXT* h264, const BYTE** pYUVData, const UI
 			return status;
 		}
 
-		sys->EncParamExt.iUsageType = SCREEN_CONTENT_REAL_TIME;
-		sys->EncParamExt.iPicWidth = (int)h264->width;
-		sys->EncParamExt.iPicHeight = (int)h264->height;
-		sys->EncParamExt.fMaxFrameRate = (int)h264->FrameRate;
+		EUsageType usageType = SCREEN_CONTENT_REAL_TIME;
+
+		switch (h264->UsageType)
+		{
+			case H264_CAMERA_VIDEO_NON_REAL_TIME:
+				usageType = CAMERA_VIDEO_NON_REAL_TIME;
+				break;
+			case H264_CAMERA_VIDEO_REAL_TIME:
+				usageType = CAMERA_VIDEO_REAL_TIME;
+				break;
+			case H264_SCREEN_CONTENT_NON_REAL_TIME:
+				usageType = SCREEN_CONTENT_NON_REAL_TIME;
+				break;
+			case H264_SCREEN_CONTENT_REAL_TIME:
+			default:
+				break;
+		}
+
+		sys->EncParamExt.iUsageType = usageType;
+		sys->EncParamExt.iPicWidth = WINPR_ASSERTING_INT_CAST(int, h264->width);
+		sys->EncParamExt.iPicHeight = WINPR_ASSERTING_INT_CAST(int, h264->height);
+		sys->EncParamExt.fMaxFrameRate = WINPR_ASSERTING_INT_CAST(short, h264->FrameRate);
 		sys->EncParamExt.iMaxBitrate = UNSPECIFIED_BIT_RATE;
 		sys->EncParamExt.bEnableDenoise = 0;
 		sys->EncParamExt.bEnableLongTermReference = 0;
-		sys->EncParamExt.bEnableFrameSkip = 0;
 		sys->EncParamExt.iSpatialLayerNum = 1;
-		sys->EncParamExt.iMultipleThreadIdc = (int)h264->NumberOfThreads;
-		sys->EncParamExt.sSpatialLayers[0].fFrameRate = h264->FrameRate;
+		sys->EncParamExt.iMultipleThreadIdc =
+		    WINPR_ASSERTING_INT_CAST(unsigned short, h264->NumberOfThreads);
+		sys->EncParamExt.sSpatialLayers[0].fFrameRate =
+		    WINPR_ASSERTING_INT_CAST(short, h264->FrameRate);
 		sys->EncParamExt.sSpatialLayers[0].iVideoWidth = sys->EncParamExt.iPicWidth;
 		sys->EncParamExt.sSpatialLayers[0].iVideoHeight = sys->EncParamExt.iPicHeight;
 		sys->EncParamExt.sSpatialLayers[0].iMaxSpatialBitrate = sys->EncParamExt.iMaxBitrate;
@@ -247,11 +274,15 @@ static int openh264_compress(H264_CONTEXT* h264, const BYTE** pYUVData, const UI
 				sys->EncParamExt.iTargetBitrate = (int)h264->BitRate;
 				sys->EncParamExt.sSpatialLayers[0].iSpatialBitrate =
 				    sys->EncParamExt.iTargetBitrate;
+				sys->EncParamExt.bEnableFrameSkip = 1;
 				break;
 
 			case H264_RATECONTROL_CQP:
 				sys->EncParamExt.iRCMode = RC_OFF_MODE;
 				sys->EncParamExt.sSpatialLayers[0].iDLayerQp = (int)h264->QP;
+				sys->EncParamExt.bEnableFrameSkip = 0;
+				break;
+			default:
 				break;
 		}
 
@@ -311,9 +342,9 @@ static int openh264_compress(H264_CONTEXT* h264, const BYTE** pYUVData, const UI
 					}
 				}
 
-				if (sys->EncParamExt.fMaxFrameRate != (int)h264->FrameRate)
+				if ((uint32_t)sys->EncParamExt.fMaxFrameRate != h264->FrameRate)
 				{
-					sys->EncParamExt.fMaxFrameRate = (int)h264->FrameRate;
+					sys->EncParamExt.fMaxFrameRate = WINPR_ASSERTING_INT_CAST(int, h264->FrameRate);
 
 					WINPR_ASSERT((*sys->pEncoder)->SetOption);
 					status = (*sys->pEncoder)
@@ -349,6 +380,8 @@ static int openh264_compress(H264_CONTEXT* h264, const BYTE** pYUVData, const UI
 				}
 
 				break;
+			default:
+				break;
 		}
 	}
 
@@ -358,9 +391,9 @@ static int openh264_compress(H264_CONTEXT* h264, const BYTE** pYUVData, const UI
 	pic.iStride[0] = (int)iStride[0];
 	pic.iStride[1] = (int)iStride[1];
 	pic.iStride[2] = (int)iStride[2];
-	pic.pData[0] = (unsigned char*)pYUVData[0];
-	pic.pData[1] = (unsigned char*)pYUVData[1];
-	pic.pData[2] = (unsigned char*)pYUVData[2];
+	pic.pData[0] = WINPR_CAST_CONST_PTR_AWAY(pYUVData[0], BYTE*);
+	pic.pData[1] = WINPR_CAST_CONST_PTR_AWAY(pYUVData[1], BYTE*);
+	pic.pData[2] = WINPR_CAST_CONST_PTR_AWAY(pYUVData[2], BYTE*);
 
 	WINPR_ASSERT((*sys->pEncoder)->EncodeFrame);
 	status = (*sys->pEncoder)->EncodeFrame(sys->pEncoder, &pic, &info);
@@ -374,11 +407,12 @@ static int openh264_compress(H264_CONTEXT* h264, const BYTE** pYUVData, const UI
 	*ppDstData = info.sLayerInfo[0].pBsBuf;
 	*pDstSize = 0;
 
-	for (i = 0; i < info.iLayerNum; i++)
+	for (int i = 0; i < info.iLayerNum; i++)
 	{
-		for (j = 0; j < info.sLayerInfo[i].iNalCount; j++)
+		for (int j = 0; j < info.sLayerInfo[i].iNalCount; j++)
 		{
-			*pDstSize += info.sLayerInfo[i].pNalLengthInByte[j];
+			const int val = info.sLayerInfo[i].pNalLengthInByte[j];
+			*pDstSize += WINPR_ASSERTING_INT_CAST(uint32_t, val);
 		}
 	}
 
@@ -387,8 +421,7 @@ static int openh264_compress(H264_CONTEXT* h264, const BYTE** pYUVData, const UI
 
 static void openh264_uninit(H264_CONTEXT* h264)
 {
-	UINT32 x;
-	H264_CONTEXT_OPENH264* sysContexts;
+	H264_CONTEXT_OPENH264* sysContexts = NULL;
 
 	WINPR_ASSERT(h264);
 
@@ -396,7 +429,7 @@ static void openh264_uninit(H264_CONTEXT* h264)
 
 	if (sysContexts)
 	{
-		for (x = 0; x < h264->numSystemData; x++)
+		for (UINT32 x = 0; x < h264->numSystemData; x++)
 		{
 			H264_CONTEXT_OPENH264* sys = &sysContexts[x];
 
@@ -445,15 +478,15 @@ static BOOL openh264_load_functionpointers(H264_CONTEXT* h264, const char* name)
 		return FALSE;
 
 	sysContexts->WelsGetCodecVersionEx =
-	    (pWelsGetCodecVersionEx)GetProcAddress(sysContexts->lib, "WelsGetCodecVersionEx");
+	    GetProcAddressAs(sysContexts->lib, "WelsGetCodecVersionEx", pWelsGetCodecVersionEx);
 	sysContexts->WelsCreateDecoder =
-	    (pWelsCreateDecoder)GetProcAddress(sysContexts->lib, "WelsCreateDecoder");
+	    GetProcAddressAs(sysContexts->lib, "WelsCreateDecoder", pWelsCreateDecoder);
 	sysContexts->WelsDestroyDecoder =
-	    (pWelsDestroyDecoder)GetProcAddress(sysContexts->lib, "WelsDestroyDecoder");
+	    GetProcAddressAs(sysContexts->lib, "WelsDestroyDecoder", pWelsDestroyDecoder);
 	sysContexts->WelsCreateSVCEncoder =
-	    (pWelsCreateSVCEncoder)GetProcAddress(sysContexts->lib, "WelsCreateSVCEncoder");
+	    GetProcAddressAs(sysContexts->lib, "WelsCreateSVCEncoder", pWelsCreateSVCEncoder);
 	sysContexts->WelsDestroySVCEncoder =
-	    (pWelsDestroySVCEncoder)GetProcAddress(sysContexts->lib, "WelsDestroySVCEncoder");
+	    GetProcAddressAs(sysContexts->lib, "WelsDestroySVCEncoder", pWelsDestroySVCEncoder);
 
 	if (!sysContexts->WelsCreateDecoder || !sysContexts->WelsDestroyDecoder ||
 	    !sysContexts->WelsCreateSVCEncoder || !sysContexts->WelsDestroySVCEncoder ||
@@ -489,17 +522,14 @@ static BOOL openh264_init(H264_CONTEXT* h264)
 {
 #if defined(WITH_OPENH264_LOADING)
 	BOOL success = FALSE;
-	size_t i;
 #endif
-	UINT32 x;
-	long status;
-	SDecodingParam sDecParam = { 0 };
-	H264_CONTEXT_OPENH264* sysContexts;
+	long status = 0;
+	H264_CONTEXT_OPENH264* sysContexts = NULL;
 	static int traceLevel = WELS_LOG_DEBUG;
 #if (OPENH264_MAJOR == 1) && (OPENH264_MINOR <= 5)
 	static EVideoFormatType videoFormat = videoFormatI420;
 #endif
-	static WelsTraceCallback traceCallback = (WelsTraceCallback)openh264_trace_callback;
+	static WelsTraceCallback traceCallback = openh264_trace_callback;
 
 	WINPR_ASSERT(h264);
 
@@ -513,7 +543,7 @@ static BOOL openh264_init(H264_CONTEXT* h264)
 	h264->pSystemData = (void*)sysContexts;
 #if defined(WITH_OPENH264_LOADING)
 
-	for (i = 0; i < ARRAYSIZE(openh264_library_names); i++)
+	for (size_t i = 0; i < ARRAYSIZE(openh264_library_names); i++)
 	{
 		const char* current = openh264_library_names[i];
 		success = openh264_load_functionpointers(h264, current);
@@ -533,8 +563,9 @@ static BOOL openh264_init(H264_CONTEXT* h264)
 	sysContexts->WelsDestroySVCEncoder = WelsDestroySVCEncoder;
 #endif
 
-	for (x = 0; x < h264->numSystemData; x++)
+	for (UINT32 x = 0; x < h264->numSystemData; x++)
 	{
+		SDecodingParam sDecParam = { 0 };
 		H264_CONTEXT_OPENH264* sys = &sysContexts[x];
 
 		if (h264->Compressor)
@@ -557,7 +588,6 @@ static BOOL openh264_init(H264_CONTEXT* h264)
 				goto EXCEPTION;
 			}
 
-			ZeroMemory(&sDecParam, sizeof(sDecParam));
 #if (OPENH264_MAJOR == 1) && (OPENH264_MINOR <= 5)
 			sDecParam.eOutputColorFormat = videoFormatI420;
 #endif
@@ -598,9 +628,9 @@ static BOOL openh264_init(H264_CONTEXT* h264)
 					goto EXCEPTION;
 				}
 
-				status =
-				    (*sys->pDecoder)
-				        ->SetOption(sys->pDecoder, DECODER_OPTION_TRACE_CALLBACK_CONTEXT, &h264);
+				status = (*sys->pDecoder)
+				             ->SetOption(sys->pDecoder, DECODER_OPTION_TRACE_CALLBACK_CONTEXT,
+				                         (void*)&h264);
 
 				if (status != 0)
 				{
@@ -611,9 +641,9 @@ static BOOL openh264_init(H264_CONTEXT* h264)
 					goto EXCEPTION;
 				}
 
-				status =
-				    (*sys->pDecoder)
-				        ->SetOption(sys->pDecoder, DECODER_OPTION_TRACE_CALLBACK, &traceCallback);
+				status = (*sys->pDecoder)
+				             ->SetOption(sys->pDecoder, DECODER_OPTION_TRACE_CALLBACK,
+				                         (void*)&traceCallback);
 
 				if (status != 0)
 				{
@@ -627,6 +657,7 @@ static BOOL openh264_init(H264_CONTEXT* h264)
 		}
 	}
 
+	h264->hwAccel = FALSE; /* not supported */
 	return TRUE;
 EXCEPTION:
 	openh264_uninit(h264);

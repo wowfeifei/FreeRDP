@@ -24,12 +24,13 @@
 #define TAG FREERDP_TAG("genericdynvc")
 
 static UINT generic_on_new_channel_connection(IWTSListenerCallback* pListenerCallback,
-                                              IWTSVirtualChannel* pChannel, BYTE* Data,
-                                              BOOL* pbAccept,
+                                              IWTSVirtualChannel* pChannel,
+                                              WINPR_ATTR_UNUSED BYTE* Data,
+                                              WINPR_ATTR_UNUSED BOOL* pbAccept,
                                               IWTSVirtualChannelCallback** ppCallback)
 {
-	GENERIC_CHANNEL_CALLBACK* callback;
-	GENERIC_DYNVC_PLUGIN* plugin;
+	GENERIC_CHANNEL_CALLBACK* callback = NULL;
+	GENERIC_DYNVC_PLUGIN* plugin = NULL;
 	GENERIC_LISTENER_CALLBACK* listener_callback = (GENERIC_LISTENER_CALLBACK*)pListenerCallback;
 
 	if (!listener_callback || !listener_callback->plugin)
@@ -53,6 +54,8 @@ static UINT generic_on_new_channel_connection(IWTSListenerCallback* pListenerCal
 	callback->channel = pChannel;
 
 	listener_callback->channel_callback = callback;
+	listener_callback->channel = pChannel;
+
 	*ppCallback = (IWTSVirtualChannelCallback*)callback;
 	return CHANNEL_RC_OK;
 }
@@ -60,8 +63,8 @@ static UINT generic_on_new_channel_connection(IWTSListenerCallback* pListenerCal
 static UINT generic_dynvc_plugin_initialize(IWTSPlugin* pPlugin,
                                             IWTSVirtualChannelManager* pChannelMgr)
 {
-	UINT rc;
-	GENERIC_LISTENER_CALLBACK* listener_callback;
+	UINT rc = 0;
+	GENERIC_LISTENER_CALLBACK* listener_callback = NULL;
 	GENERIC_DYNVC_PLUGIN* plugin = (GENERIC_DYNVC_PLUGIN*)pPlugin;
 
 	if (!plugin)
@@ -155,7 +158,7 @@ UINT freerdp_generic_DVCPluginEntry(IDRDYNVC_ENTRY_POINTS* pEntryPoints, const c
                                     DYNVC_PLUGIN_INIT_FN initPluginFn,
                                     DYNVC_PLUGIN_TERMINATE_FN terminatePluginFn)
 {
-	GENERIC_DYNVC_PLUGIN* plugin;
+	GENERIC_DYNVC_PLUGIN* plugin = NULL;
 	UINT error = CHANNEL_RC_INITIALIZATION_ERROR;
 
 	WINPR_ASSERT(pEntryPoints);

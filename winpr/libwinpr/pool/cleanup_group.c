@@ -19,6 +19,7 @@
 
 #include <winpr/config.h>
 
+#include <winpr/winpr.h>
 #include <winpr/crt.h>
 #include <winpr/pool.h>
 #include <winpr/library.h>
@@ -42,11 +43,11 @@ static BOOL CALLBACK init_module(PINIT_ONCE once, PVOID param, PVOID* context)
 	if (kernel32)
 	{
 		pCreateThreadpoolCleanupGroup =
-		    (void*)GetProcAddress(kernel32, "CreateThreadpoolCleanupGroup");
+		    GetProcAddressAs(kernel32, "CreateThreadpoolCleanupGroup", void*);
 		pCloseThreadpoolCleanupGroupMembers =
-		    (void*)GetProcAddress(kernel32, "CloseThreadpoolCleanupGroupMembers");
+		    GetProcAddressAs(kernel32, "CloseThreadpoolCleanupGroupMembers", void*);
 		pCloseThreadpoolCleanupGroup =
-		    (void*)GetProcAddress(kernel32, "CloseThreadpoolCleanupGroup");
+		    GetProcAddressAs(kernel32, "CloseThreadpoolCleanupGroup", void*);
 	}
 
 	return TRUE;
@@ -91,8 +92,9 @@ VOID winpr_SetThreadpoolCallbackCleanupGroup(PTP_CALLBACK_ENVIRON pcbe, PTP_CLEA
 #endif
 }
 
-VOID winpr_CloseThreadpoolCleanupGroupMembers(PTP_CLEANUP_GROUP ptpcg, BOOL fCancelPendingCallbacks,
-                                              PVOID pvCleanupContext)
+VOID winpr_CloseThreadpoolCleanupGroupMembers(WINPR_ATTR_UNUSED PTP_CLEANUP_GROUP ptpcg,
+                                              WINPR_ATTR_UNUSED BOOL fCancelPendingCallbacks,
+                                              WINPR_ATTR_UNUSED PVOID pvCleanupContext)
 {
 #ifdef _WIN32
 	InitOnceExecuteOnce(&init_once_module, init_module, NULL, NULL);

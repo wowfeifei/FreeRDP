@@ -22,13 +22,14 @@
 
 #include <winpr/config.h>
 
-#if defined __linux__ && !defined ANDROID
-
 #include <winpr/assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdarg.h>
+#if defined(WINPR_HAVE_SYS_EVENTFD_H)
+#include <sys/eventfd.h>
+#endif
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -43,6 +44,9 @@
 
 #include "comm_ioctl.h"
 
+#include "../log.h"
+#define TAG WINPR_TAG("comm")
+
 /**
  * Communication Resources:
  * http://msdn.microsoft.com/en-us/library/windows/desktop/aa363196/
@@ -50,7 +54,7 @@
 
 #include "comm.h"
 
-static wLog* _Log = NULL;
+static wLog* sLog = NULL;
 
 struct comm_device
 {
@@ -61,14 +65,78 @@ struct comm_device
 typedef struct comm_device COMM_DEVICE;
 
 /* FIXME: get a clever data structure, see also io.h functions */
-/* _CommDevices is a NULL-terminated array with a maximun of COMM_DEVICE_MAX COMM_DEVICE */
+/* _CommDevices is a NULL-terminated array with a maximum of COMM_DEVICE_MAX COMM_DEVICE */
 #define COMM_DEVICE_MAX 128
-static COMM_DEVICE** _CommDevices = NULL;
-static CRITICAL_SECTION _CommDevicesLock;
+static COMM_DEVICE** sCommDevices = NULL;
+static CRITICAL_SECTION sCommDevicesLock = { 0 };
 
-static HANDLE_CREATOR _CommHandleCreator;
+static pthread_once_t sCommInitialized = PTHREAD_ONCE_INIT;
 
-static pthread_once_t _CommInitialized = PTHREAD_ONCE_INIT;
+static const _SERIAL_IOCTL_NAME S_SERIAL_IOCTL_NAMES[] = {
+	{ IOCTL_SERIAL_SET_BAUD_RATE, "IOCTL_SERIAL_SET_BAUD_RATE" },
+	{ IOCTL_SERIAL_GET_BAUD_RATE, "IOCTL_SERIAL_GET_BAUD_RATE" },
+	{ IOCTL_SERIAL_SET_LINE_CONTROL, "IOCTL_SERIAL_SET_LINE_CONTROL" },
+	{ IOCTL_SERIAL_GET_LINE_CONTROL, "IOCTL_SERIAL_GET_LINE_CONTROL" },
+	{ IOCTL_SERIAL_SET_TIMEOUTS, "IOCTL_SERIAL_SET_TIMEOUTS" },
+	{ IOCTL_SERIAL_GET_TIMEOUTS, "IOCTL_SERIAL_GET_TIMEOUTS" },
+	{ IOCTL_SERIAL_GET_CHARS, "IOCTL_SERIAL_GET_CHARS" },
+	{ IOCTL_SERIAL_SET_CHARS, "IOCTL_SERIAL_SET_CHARS" },
+	{ IOCTL_SERIAL_SET_DTR, "IOCTL_SERIAL_SET_DTR" },
+	{ IOCTL_SERIAL_CLR_DTR, "IOCTL_SERIAL_CLR_DTR" },
+	{ IOCTL_SERIAL_RESET_DEVICE, "IOCTL_SERIAL_RESET_DEVICE" },
+	{ IOCTL_SERIAL_SET_RTS, "IOCTL_SERIAL_SET_RTS" },
+	{ IOCTL_SERIAL_CLR_RTS, "IOCTL_SERIAL_CLR_RTS" },
+	{ IOCTL_SERIAL_SET_XOFF, "IOCTL_SERIAL_SET_XOFF" },
+	{ IOCTL_SERIAL_SET_XON, "IOCTL_SERIAL_SET_XON" },
+	{ IOCTL_SERIAL_SET_BREAK_ON, "IOCTL_SERIAL_SET_BREAK_ON" },
+	{ IOCTL_SERIAL_SET_BREAK_OFF, "IOCTL_SERIAL_SET_BREAK_OFF" },
+	{ IOCTL_SERIAL_SET_QUEUE_SIZE, "IOCTL_SERIAL_SET_QUEUE_SIZE" },
+	{ IOCTL_SERIAL_GET_WAIT_MASK, "IOCTL_SERIAL_GET_WAIT_MASK" },
+	{ IOCTL_SERIAL_SET_WAIT_MASK, "IOCTL_SERIAL_SET_WAIT_MASK" },
+	{ IOCTL_SERIAL_WAIT_ON_MASK, "IOCTL_SERIAL_WAIT_ON_MASK" },
+	{ IOCTL_SERIAL_IMMEDIATE_CHAR, "IOCTL_SERIAL_IMMEDIATE_CHAR" },
+	{ IOCTL_SERIAL_PURGE, "IOCTL_SERIAL_PURGE" },
+	{ IOCTL_SERIAL_GET_HANDFLOW, "IOCTL_SERIAL_GET_HANDFLOW" },
+	{ IOCTL_SERIAL_SET_HANDFLOW, "IOCTL_SERIAL_SET_HANDFLOW" },
+	{ IOCTL_SERIAL_GET_MODEMSTATUS, "IOCTL_SERIAL_GET_MODEMSTATUS" },
+	{ IOCTL_SERIAL_GET_DTRRTS, "IOCTL_SERIAL_GET_DTRRTS" },
+	{ IOCTL_SERIAL_GET_COMMSTATUS, "IOCTL_SERIAL_GET_COMMSTATUS" },
+	{ IOCTL_SERIAL_GET_PROPERTIES, "IOCTL_SERIAL_GET_PROPERTIES" },
+	// {IOCTL_SERIAL_XOFF_COUNTER,	"IOCTL_SERIAL_XOFF_COUNTER"},
+	// {IOCTL_SERIAL_LSRMST_INSERT,	"IOCTL_SERIAL_LSRMST_INSERT"},
+	{ IOCTL_SERIAL_CONFIG_SIZE, "IOCTL_SERIAL_CONFIG_SIZE" },
+	// {IOCTL_SERIAL_GET_STATS,	"IOCTL_SERIAL_GET_STATS"},
+	// {IOCTL_SERIAL_CLEAR_STATS,	"IOCTL_SERIAL_CLEAR_STATS"},
+	// {IOCTL_SERIAL_GET_MODEM_CONTROL,"IOCTL_SERIAL_GET_MODEM_CONTROL"},
+	// {IOCTL_SERIAL_SET_MODEM_CONTROL,"IOCTL_SERIAL_SET_MODEM_CONTROL"},
+	// {IOCTL_SERIAL_SET_FIFO_CONTROL,	"IOCTL_SERIAL_SET_FIFO_CONTROL"},
+
+	// {IOCTL_PAR_QUERY_INFORMATION,	"IOCTL_PAR_QUERY_INFORMATION"},
+	// {IOCTL_PAR_SET_INFORMATION,	"IOCTL_PAR_SET_INFORMATION"},
+	// {IOCTL_PAR_QUERY_DEVICE_ID,	"IOCTL_PAR_QUERY_DEVICE_ID"},
+	// {IOCTL_PAR_QUERY_DEVICE_ID_SIZE,"IOCTL_PAR_QUERY_DEVICE_ID_SIZE"},
+	// {IOCTL_IEEE1284_GET_MODE,	"IOCTL_IEEE1284_GET_MODE"},
+	// {IOCTL_IEEE1284_NEGOTIATE,	"IOCTL_IEEE1284_NEGOTIATE"},
+	// {IOCTL_PAR_SET_WRITE_ADDRESS,	"IOCTL_PAR_SET_WRITE_ADDRESS"},
+	// {IOCTL_PAR_SET_READ_ADDRESS,	"IOCTL_PAR_SET_READ_ADDRESS"},
+	// {IOCTL_PAR_GET_DEVICE_CAPS,	"IOCTL_PAR_GET_DEVICE_CAPS"},
+	// {IOCTL_PAR_GET_DEFAULT_MODES,	"IOCTL_PAR_GET_DEFAULT_MODES"},
+	// {IOCTL_PAR_QUERY_RAW_DEVICE_ID, "IOCTL_PAR_QUERY_RAW_DEVICE_ID"},
+	// {IOCTL_PAR_IS_PORT_FREE,	"IOCTL_PAR_IS_PORT_FREE"},
+
+	{ IOCTL_USBPRINT_GET_1284_ID, "IOCTL_USBPRINT_GET_1284_ID" }
+};
+const char* _comm_serial_ioctl_name(ULONG number)
+{
+	for (size_t x = 0; x < ARRAYSIZE(S_SERIAL_IOCTL_NAMES); x++)
+	{
+		const _SERIAL_IOCTL_NAME* cur = &S_SERIAL_IOCTL_NAMES[x];
+		if (cur->number == number)
+			return cur->name;
+	}
+
+	return "(unknown ioctl name)";
+}
 
 static int CommGetFd(HANDLE handle)
 {
@@ -80,41 +148,45 @@ static int CommGetFd(HANDLE handle)
 	return comm->fd;
 }
 
-HANDLE_CREATOR* GetCommHandleCreator(void)
+const HANDLE_CREATOR* GetCommHandleCreator(void)
 {
-	_CommHandleCreator.IsHandled = IsCommDevice;
-	_CommHandleCreator.CreateFileA = CommCreateFileA;
-	return &_CommHandleCreator;
+#if defined(WINPR_HAVE_SERIAL_SUPPORT)
+	static const HANDLE_CREATOR sCommHandleCreator = { .IsHandled = IsCommDevice,
+		                                               .CreateFileA = CommCreateFileA };
+	return &sCommHandleCreator;
+#else
+	return NULL;
+#endif
 }
 
-static void _CommInit(void)
+static void CommInit(void)
 {
 	/* NB: error management to be done outside of this function */
-	WINPR_ASSERT(_Log == NULL);
-	WINPR_ASSERT(_CommDevices == NULL);
-	_CommDevices = (COMM_DEVICE**)calloc(COMM_DEVICE_MAX + 1, sizeof(COMM_DEVICE*));
+	WINPR_ASSERT(sLog == NULL);
+	WINPR_ASSERT(sCommDevices == NULL);
+	sCommDevices = (COMM_DEVICE**)calloc(COMM_DEVICE_MAX + 1, sizeof(COMM_DEVICE*));
 
-	if (!_CommDevices)
+	if (!sCommDevices)
 		return;
 
-	if (!InitializeCriticalSectionEx(&_CommDevicesLock, 0, 0))
+	if (!InitializeCriticalSectionEx(&sCommDevicesLock, 0, 0))
 	{
-		free(_CommDevices);
-		_CommDevices = NULL;
+		free((void*)sCommDevices);
+		sCommDevices = NULL;
 		return;
 	}
 
-	_Log = WLog_Get("com.winpr.comm");
-	WINPR_ASSERT(_Log != NULL);
+	sLog = WLog_Get(TAG);
+	WINPR_ASSERT(sLog != NULL);
 }
 
 /**
- * Returns TRUE when the comm module is correctly intialized, FALSE otherwise
+ * Returns TRUE when the comm module is correctly initialized, FALSE otherwise
  * with ERROR_DLL_INIT_FAILED set as the last error.
  */
-static BOOL CommInitialized()
+static BOOL CommInitialized(void)
 {
-	if (pthread_once(&_CommInitialized, _CommInit) != 0)
+	if (pthread_once(&sCommInitialized, CommInit) != 0)
 	{
 		SetLastError(ERROR_DLL_INIT_FAILED);
 		return FALSE;
@@ -128,79 +200,84 @@ void CommLog_Print(DWORD level, ...)
 	if (!CommInitialized())
 		return;
 
-	va_list ap;
+	va_list ap = { 0 };
 	va_start(ap, level);
-	WLog_PrintVA(_Log, level, ap);
+	WLog_PrintVA(sLog, level, ap);
 	va_end(ap);
 }
 
-BOOL BuildCommDCBA(LPCSTR lpDef, LPDCB lpDCB)
+BOOL BuildCommDCBA(WINPR_ATTR_UNUSED LPCSTR lpDef, WINPR_ATTR_UNUSED LPDCB lpDCB)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL BuildCommDCBW(LPCWSTR lpDef, LPDCB lpDCB)
+BOOL BuildCommDCBW(WINPR_ATTR_UNUSED LPCWSTR lpDef, WINPR_ATTR_UNUSED LPDCB lpDCB)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL BuildCommDCBAndTimeoutsA(LPCSTR lpDef, LPDCB lpDCB, LPCOMMTIMEOUTS lpCommTimeouts)
+BOOL BuildCommDCBAndTimeoutsA(WINPR_ATTR_UNUSED LPCSTR lpDef, WINPR_ATTR_UNUSED LPDCB lpDCB,
+                              WINPR_ATTR_UNUSED LPCOMMTIMEOUTS lpCommTimeouts)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL BuildCommDCBAndTimeoutsW(LPCWSTR lpDef, LPDCB lpDCB, LPCOMMTIMEOUTS lpCommTimeouts)
+BOOL BuildCommDCBAndTimeoutsW(WINPR_ATTR_UNUSED LPCWSTR lpDef, WINPR_ATTR_UNUSED LPDCB lpDCB,
+                              WINPR_ATTR_UNUSED LPCOMMTIMEOUTS lpCommTimeouts)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL CommConfigDialogA(LPCSTR lpszName, HWND hWnd, LPCOMMCONFIG lpCC)
+BOOL CommConfigDialogA(WINPR_ATTR_UNUSED LPCSTR lpszName, WINPR_ATTR_UNUSED HWND hWnd,
+                       WINPR_ATTR_UNUSED LPCOMMCONFIG lpCC)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL CommConfigDialogW(LPCWSTR lpszName, HWND hWnd, LPCOMMCONFIG lpCC)
+BOOL CommConfigDialogW(WINPR_ATTR_UNUSED LPCWSTR lpszName, WINPR_ATTR_UNUSED HWND hWnd,
+                       WINPR_ATTR_UNUSED LPCOMMCONFIG lpCC)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL GetCommConfig(HANDLE hCommDev, LPCOMMCONFIG lpCC, LPDWORD lpdwSize)
+BOOL GetCommConfig(HANDLE hCommDev, WINPR_ATTR_UNUSED LPCOMMCONFIG lpCC,
+                   WINPR_ATTR_UNUSED LPDWORD lpdwSize)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hCommDev;
 
@@ -212,12 +289,13 @@ BOOL GetCommConfig(HANDLE hCommDev, LPCOMMCONFIG lpCC, LPDWORD lpdwSize)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL SetCommConfig(HANDLE hCommDev, LPCOMMCONFIG lpCC, DWORD dwSize)
+BOOL SetCommConfig(HANDLE hCommDev, WINPR_ATTR_UNUSED LPCOMMCONFIG lpCC,
+                   WINPR_ATTR_UNUSED DWORD dwSize)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hCommDev;
 
@@ -229,12 +307,12 @@ BOOL SetCommConfig(HANDLE hCommDev, LPCOMMCONFIG lpCC, DWORD dwSize)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL GetCommMask(HANDLE hFile, PDWORD lpEvtMask)
+BOOL GetCommMask(HANDLE hFile, WINPR_ATTR_UNUSED PDWORD lpEvtMask)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
 
@@ -246,12 +324,12 @@ BOOL GetCommMask(HANDLE hFile, PDWORD lpEvtMask)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL SetCommMask(HANDLE hFile, DWORD dwEvtMask)
+BOOL SetCommMask(HANDLE hFile, WINPR_ATTR_UNUSED DWORD dwEvtMask)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
 
@@ -263,12 +341,12 @@ BOOL SetCommMask(HANDLE hFile, DWORD dwEvtMask)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL GetCommModemStatus(HANDLE hFile, PDWORD lpModemStat)
+BOOL GetCommModemStatus(HANDLE hFile, WINPR_ATTR_UNUSED PDWORD lpModemStat)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
 
@@ -280,7 +358,7 @@ BOOL GetCommModemStatus(HANDLE hFile, PDWORD lpModemStat)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
@@ -293,7 +371,7 @@ BOOL GetCommModemStatus(HANDLE hFile, PDWORD lpModemStat)
 BOOL GetCommProperties(HANDLE hFile, LPCOMMPROP lpCommProp)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
-	DWORD bytesReturned;
+	DWORD bytesReturned = 0;
 
 	if (!CommIsHandleValid(hFile))
 		return FALSE;
@@ -319,10 +397,10 @@ BOOL GetCommProperties(HANDLE hFile, LPCOMMPROP lpCommProp)
  */
 BOOL GetCommState(HANDLE hFile, LPDCB lpDCB)
 {
-	DCB* lpLocalDcb;
+	DCB* lpLocalDcb = NULL;
 	struct termios currentState;
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
-	DWORD bytesReturned;
+	DWORD bytesReturned = 0;
 
 	if (!CommIsHandleValid(hFile))
 		return FALSE;
@@ -425,7 +503,7 @@ BOOL GetCommState(HANDLE hFile, LPDCB lpDCB)
 	lpLocalDcb->wReserved = 0; /* must be zero */
 	lpLocalDcb->XonLim = handflow.XonLimit;
 	lpLocalDcb->XoffLim = handflow.XoffLimit;
-	SERIAL_LINE_CONTROL lineControl;
+	SERIAL_LINE_CONTROL lineControl = { 0 };
 
 	if (!CommDeviceIoControl(pComm, IOCTL_SERIAL_GET_LINE_CONTROL, NULL, 0, &lineControl,
 	                         sizeof(SERIAL_LINE_CONTROL), &bytesReturned, NULL))
@@ -472,9 +550,9 @@ error_handle:
  */
 BOOL SetCommState(HANDLE hFile, LPDCB lpDCB)
 {
-	struct termios upcomingTermios;
+	struct termios upcomingTermios = { 0 };
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
-	DWORD bytesReturned;
+	DWORD bytesReturned = 0;
 
 	/* FIXME: validate changes according GetCommProperties? */
 
@@ -535,8 +613,7 @@ BOOL SetCommState(HANDLE hFile, LPDCB lpDCB)
 		return FALSE;
 	}
 
-	SERIAL_HANDFLOW handflow;
-	ZeroMemory(&handflow, sizeof(SERIAL_HANDFLOW));
+	SERIAL_HANDFLOW handflow = { 0 };
 
 	if (lpDCB->fOutxCtsFlow)
 	{
@@ -641,7 +718,6 @@ BOOL SetCommState(HANDLE hFile, LPDCB lpDCB)
 	}
 
 	/** upcomingTermios stage **/
-	ZeroMemory(&upcomingTermios, sizeof(struct termios));
 
 	if (tcgetattr(pComm->fd, &upcomingTermios) <
 	    0) /* NB: preserves current settings not directly handled by the Communication Functions */
@@ -652,7 +728,7 @@ BOOL SetCommState(HANDLE hFile, LPDCB lpDCB)
 
 	if (lpDCB->fBinary)
 	{
-		upcomingTermios.c_lflag &= ~ICANON;
+		upcomingTermios.c_lflag &= WINPR_ASSERTING_INT_CAST(tcflag_t, ~ICANON);
 	}
 	else
 	{
@@ -666,7 +742,7 @@ BOOL SetCommState(HANDLE hFile, LPDCB lpDCB)
 	}
 	else
 	{
-		upcomingTermios.c_iflag &= ~INPCK;
+		upcomingTermios.c_iflag &= WINPR_ASSERTING_INT_CAST(tcflag_t, ~INPCK);
 	}
 
 	/* http://msdn.microsoft.com/en-us/library/windows/desktop/aa363423%28v=vs.85%29.aspx
@@ -696,7 +772,7 @@ BOOL SetCommState(HANDLE hFile, LPDCB lpDCB)
 BOOL GetCommTimeouts(HANDLE hFile, LPCOMMTIMEOUTS lpCommTimeouts)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
-	DWORD bytesReturned;
+	DWORD bytesReturned = 0;
 
 	if (!CommIsHandleValid(hFile))
 		return FALSE;
@@ -720,7 +796,7 @@ BOOL GetCommTimeouts(HANDLE hFile, LPCOMMTIMEOUTS lpCommTimeouts)
 BOOL SetCommTimeouts(HANDLE hFile, LPCOMMTIMEOUTS lpCommTimeouts)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
-	DWORD bytesReturned;
+	DWORD bytesReturned = 0;
 
 	if (!CommIsHandleValid(hFile))
 		return FALSE;
@@ -737,46 +813,50 @@ BOOL SetCommTimeouts(HANDLE hFile, LPCOMMTIMEOUTS lpCommTimeouts)
 	return TRUE;
 }
 
-BOOL GetDefaultCommConfigA(LPCSTR lpszName, LPCOMMCONFIG lpCC, LPDWORD lpdwSize)
+BOOL GetDefaultCommConfigA(WINPR_ATTR_UNUSED LPCSTR lpszName, WINPR_ATTR_UNUSED LPCOMMCONFIG lpCC,
+                           WINPR_ATTR_UNUSED LPDWORD lpdwSize)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL GetDefaultCommConfigW(LPCWSTR lpszName, LPCOMMCONFIG lpCC, LPDWORD lpdwSize)
+BOOL GetDefaultCommConfigW(WINPR_ATTR_UNUSED LPCWSTR lpszName, WINPR_ATTR_UNUSED LPCOMMCONFIG lpCC,
+                           WINPR_ATTR_UNUSED LPDWORD lpdwSize)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL SetDefaultCommConfigA(LPCSTR lpszName, LPCOMMCONFIG lpCC, DWORD dwSize)
+BOOL SetDefaultCommConfigA(WINPR_ATTR_UNUSED LPCSTR lpszName, WINPR_ATTR_UNUSED LPCOMMCONFIG lpCC,
+                           WINPR_ATTR_UNUSED DWORD dwSize)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL SetDefaultCommConfigW(LPCWSTR lpszName, LPCOMMCONFIG lpCC, DWORD dwSize)
+BOOL SetDefaultCommConfigW(WINPR_ATTR_UNUSED LPCWSTR lpszName, WINPR_ATTR_UNUSED LPCOMMCONFIG lpCC,
+                           WINPR_ATTR_UNUSED DWORD dwSize)
 {
 	if (!CommInitialized())
 		return FALSE;
 
 	/* TODO: not implemented */
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
@@ -793,7 +873,7 @@ BOOL SetCommBreak(HANDLE hFile)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
@@ -810,12 +890,13 @@ BOOL ClearCommBreak(HANDLE hFile)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL ClearCommError(HANDLE hFile, PDWORD lpErrors, LPCOMSTAT lpStat)
+BOOL ClearCommError(HANDLE hFile, WINPR_ATTR_UNUSED PDWORD lpErrors,
+                    WINPR_ATTR_UNUSED LPCOMSTAT lpStat)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
 
@@ -827,7 +908,7 @@ BOOL ClearCommError(HANDLE hFile, PDWORD lpErrors, LPCOMSTAT lpStat)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
@@ -872,7 +953,7 @@ BOOL SetupComm(HANDLE hFile, DWORD dwInQueue, DWORD dwOutQueue)
 	return TRUE;
 }
 
-BOOL EscapeCommFunction(HANDLE hFile, DWORD dwFunc)
+BOOL EscapeCommFunction(HANDLE hFile, WINPR_ATTR_UNUSED DWORD dwFunc)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
 
@@ -884,12 +965,12 @@ BOOL EscapeCommFunction(HANDLE hFile, DWORD dwFunc)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL TransmitCommChar(HANDLE hFile, char cChar)
+BOOL TransmitCommChar(HANDLE hFile, WINPR_ATTR_UNUSED char cChar)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
 
@@ -901,12 +982,13 @@ BOOL TransmitCommChar(HANDLE hFile, char cChar)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL WaitCommEvent(HANDLE hFile, PDWORD lpEvtMask, LPOVERLAPPED lpOverlapped)
+BOOL WaitCommEvent(HANDLE hFile, WINPR_ATTR_UNUSED PDWORD lpEvtMask,
+                   WINPR_ATTR_UNUSED LPOVERLAPPED lpOverlapped)
 {
 	WINPR_COMM* pComm = (WINPR_COMM*)hFile;
 
@@ -918,7 +1000,7 @@ BOOL WaitCommEvent(HANDLE hFile, PDWORD lpEvtMask, LPOVERLAPPED lpOverlapped)
 	if (!pComm)
 		return FALSE;
 
-	CommLog_Print(WLOG_ERROR, "%s: Not implemented", __FUNCTION__);
+	CommLog_Print(WLOG_ERROR, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
@@ -934,16 +1016,15 @@ BOOL WaitCommEvent(HANDLE hFile, PDWORD lpEvtMask, LPOVERLAPPED lpOverlapped)
  */
 BOOL DefineCommDevice(/* DWORD dwFlags,*/ LPCTSTR lpDeviceName, LPCTSTR lpTargetPath)
 {
-	int i = 0;
 	LPTSTR storedDeviceName = NULL;
 	LPTSTR storedTargetPath = NULL;
 
 	if (!CommInitialized())
 		return FALSE;
 
-	EnterCriticalSection(&_CommDevicesLock);
+	EnterCriticalSection(&sCommDevicesLock);
 
-	if (_CommDevices == NULL)
+	if (sCommDevices == NULL)
 	{
 		SetLastError(ERROR_DLL_INIT_FAILED);
 		goto error_handle;
@@ -965,33 +1046,34 @@ BOOL DefineCommDevice(/* DWORD dwFlags,*/ LPCTSTR lpDeviceName, LPCTSTR lpTarget
 		goto error_handle;
 	}
 
-	for (i = 0; i < COMM_DEVICE_MAX; i++)
+	int i = 0;
+	for (; i < COMM_DEVICE_MAX; i++)
 	{
-		if (_CommDevices[i] != NULL)
+		if (sCommDevices[i] != NULL)
 		{
-			if (_tcscmp(_CommDevices[i]->name, storedDeviceName) == 0)
+			if (_tcscmp(sCommDevices[i]->name, storedDeviceName) == 0)
 			{
 				/* take over the emplacement */
-				free(_CommDevices[i]->name);
-				free(_CommDevices[i]->path);
-				_CommDevices[i]->name = storedDeviceName;
-				_CommDevices[i]->path = storedTargetPath;
+				free(sCommDevices[i]->name);
+				free(sCommDevices[i]->path);
+				sCommDevices[i]->name = storedDeviceName;
+				sCommDevices[i]->path = storedTargetPath;
 				break;
 			}
 		}
 		else
 		{
 			/* new emplacement */
-			_CommDevices[i] = (COMM_DEVICE*)calloc(1, sizeof(COMM_DEVICE));
+			sCommDevices[i] = (COMM_DEVICE*)calloc(1, sizeof(COMM_DEVICE));
 
-			if (_CommDevices[i] == NULL)
+			if (sCommDevices[i] == NULL)
 			{
 				SetLastError(ERROR_OUTOFMEMORY);
 				goto error_handle;
 			}
 
-			_CommDevices[i]->name = storedDeviceName;
-			_CommDevices[i]->path = storedTargetPath;
+			sCommDevices[i]->name = storedDeviceName;
+			sCommDevices[i]->path = storedTargetPath;
 			break;
 		}
 	}
@@ -1002,12 +1084,12 @@ BOOL DefineCommDevice(/* DWORD dwFlags,*/ LPCTSTR lpDeviceName, LPCTSTR lpTarget
 		goto error_handle;
 	}
 
-	LeaveCriticalSection(&_CommDevicesLock);
+	LeaveCriticalSection(&sCommDevicesLock);
 	return TRUE;
 error_handle:
 	free(storedDeviceName);
 	free(storedTargetPath);
-	LeaveCriticalSection(&_CommDevicesLock);
+	LeaveCriticalSection(&sCommDevicesLock);
 	return FALSE;
 }
 
@@ -1029,14 +1111,13 @@ error_handle:
  */
 DWORD QueryCommDevice(LPCTSTR lpDeviceName, LPTSTR lpTargetPath, DWORD ucchMax)
 {
-	int i;
-	LPTSTR storedTargetPath;
+	LPTSTR storedTargetPath = NULL;
 	SetLastError(ERROR_SUCCESS);
 
 	if (!CommInitialized())
 		return 0;
 
-	if (_CommDevices == NULL)
+	if (sCommDevices == NULL)
 	{
 		SetLastError(ERROR_DLL_INIT_FAILED);
 		return 0;
@@ -1048,16 +1129,16 @@ DWORD QueryCommDevice(LPCTSTR lpDeviceName, LPTSTR lpTargetPath, DWORD ucchMax)
 		return 0;
 	}
 
-	EnterCriticalSection(&_CommDevicesLock);
+	EnterCriticalSection(&sCommDevicesLock);
 	storedTargetPath = NULL;
 
-	for (i = 0; i < COMM_DEVICE_MAX; i++)
+	for (int i = 0; i < COMM_DEVICE_MAX; i++)
 	{
-		if (_CommDevices[i] != NULL)
+		if (sCommDevices[i] != NULL)
 		{
-			if (_tcscmp(_CommDevices[i]->name, lpDeviceName) == 0)
+			if (_tcscmp(sCommDevices[i]->name, lpDeviceName) == 0)
 			{
-				storedTargetPath = _CommDevices[i]->path;
+				storedTargetPath = sCommDevices[i]->path;
 				break;
 			}
 
@@ -1067,7 +1148,7 @@ DWORD QueryCommDevice(LPCTSTR lpDeviceName, LPTSTR lpTargetPath, DWORD ucchMax)
 		break;
 	}
 
-	LeaveCriticalSection(&_CommDevicesLock);
+	LeaveCriticalSection(&sCommDevicesLock);
 
 	if (storedTargetPath == NULL)
 	{
@@ -1075,15 +1156,16 @@ DWORD QueryCommDevice(LPCTSTR lpDeviceName, LPTSTR lpTargetPath, DWORD ucchMax)
 		return 0;
 	}
 
-	if (_tcslen(storedTargetPath) + 2 > ucchMax)
+	const size_t size = _tcsnlen(storedTargetPath, ucchMax);
+	if (size + 2 > ucchMax)
 	{
 		SetLastError(ERROR_INSUFFICIENT_BUFFER);
 		return 0;
 	}
 
-	_tcscpy(lpTargetPath, storedTargetPath);
-	lpTargetPath[_tcslen(storedTargetPath) + 1] = '\0'; /* 2nd final '\0' */
-	return _tcslen(lpTargetPath) + 2;
+	_tcsncpy(lpTargetPath, storedTargetPath, size + 1);
+	lpTargetPath[size + 2] = '\0'; /* 2nd final '\0' */
+	return (DWORD)size + 2UL;
 }
 
 /**
@@ -1109,9 +1191,9 @@ BOOL IsCommDevice(LPCTSTR lpDeviceName)
  */
 void _comm_setServerSerialDriver(HANDLE hComm, SERIAL_DRIVER_ID driverId)
 {
-	ULONG Type;
-	WINPR_HANDLE* Object;
-	WINPR_COMM* pComm;
+	ULONG Type = 0;
+	WINPR_HANDLE* Object = NULL;
+	WINPR_COMM* pComm = NULL;
 
 	if (!CommInitialized())
 		return;
@@ -1167,10 +1249,10 @@ HANDLE CommCreateFileA(LPCSTR lpDeviceName, DWORD dwDesiredAccess, DWORD dwShare
                        LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition,
                        DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
 {
-	CHAR devicePath[MAX_PATH];
-	struct stat deviceStat;
+	CHAR devicePath[MAX_PATH] = { 0 };
+	struct stat deviceStat = { 0 };
 	WINPR_COMM* pComm = NULL;
-	struct termios upcomingTermios;
+	struct termios upcomingTermios = { 0 };
 
 	if (!CommInitialized())
 		return INVALID_HANDLE_VALUE;
@@ -1263,8 +1345,10 @@ HANDLE CommCreateFileA(LPCSTR lpDeviceName, DWORD dwDesiredAccess, DWORD dwShare
 		goto error_handle;
 	}
 
+#if defined(WINPR_HAVE_SYS_EVENTFD_H)
 	pComm->fd_read_event = eventfd(
 	    0, EFD_NONBLOCK); /* EFD_NONBLOCK required because a read() is not always expected */
+#endif
 
 	if (pComm->fd_read_event < 0)
 	{
@@ -1283,8 +1367,10 @@ HANDLE CommCreateFileA(LPCSTR lpDeviceName, DWORD dwDesiredAccess, DWORD dwShare
 		goto error_handle;
 	}
 
+#if defined(WINPR_HAVE_SYS_EVENTFD_H)
 	pComm->fd_write_event = eventfd(
 	    0, EFD_NONBLOCK); /* EFD_NONBLOCK required because a read() is not always expected */
+#endif
 
 	if (pComm->fd_write_event < 0)
 	{
@@ -1298,10 +1384,12 @@ HANDLE CommCreateFileA(LPCSTR lpDeviceName, DWORD dwDesiredAccess, DWORD dwShare
 	pComm->serverSerialDriverId = SerialDriverUnknown;
 	InitializeCriticalSection(&pComm->EventsLock);
 
+#if defined(WINPR_HAVE_COMM_COUNTERS)
 	if (ioctl(pComm->fd, TIOCGICOUNT, &(pComm->counters)) < 0)
 	{
+		char ebuffer[256] = { 0 };
 		CommLog_Print(WLOG_WARN, "TIOCGICOUNT ioctl failed, errno=[%d] %s.", errno,
-		              strerror(errno));
+		              winpr_strerror(errno, ebuffer, sizeof(ebuffer)));
 		CommLog_Print(WLOG_WARN, "could not read counters.");
 		/* could not initialize counters but keep on.
 		 *
@@ -1311,6 +1399,7 @@ HANDLE CommCreateFileA(LPCSTR lpDeviceName, DWORD dwDesiredAccess, DWORD dwShare
 		 */
 		ZeroMemory(&(pComm->counters), sizeof(struct serial_icounter_struct));
 	}
+#endif
 
 	/* The binary/raw mode is required for the redirection but
 	 * only flags that are not handle somewhere-else, except
@@ -1323,8 +1412,8 @@ HANDLE CommCreateFileA(LPCSTR lpDeviceName, DWORD dwDesiredAccess, DWORD dwShare
 		goto error_handle;
 	}
 
-	upcomingTermios.c_iflag &=
-	    ~(/*IGNBRK |*/ BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL /*| IXON*/);
+	upcomingTermios.c_iflag &= WINPR_ASSERTING_INT_CAST(
+	    tcflag_t, ~(/*IGNBRK |*/ BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL /*| IXON*/));
 	upcomingTermios.c_oflag = 0; /* <=> &= ~OPOST */
 	upcomingTermios.c_lflag = 0; /* <=> &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN); */
 	/* upcomingTermios.c_cflag &= ~(CSIZE | PARENB); */
@@ -1345,7 +1434,9 @@ HANDLE CommCreateFileA(LPCSTR lpDeviceName, DWORD dwDesiredAccess, DWORD dwShare
 
 	return (HANDLE)pComm;
 error_handle:
-	CloseHandle(pComm);
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_MISMATCHED_DEALLOC(void) CloseHandle(pComm);
+	WINPR_PRAGMA_DIAG_POP
 	return INVALID_HANDLE_VALUE;
 }
 
@@ -1377,19 +1468,6 @@ BOOL CommCloseHandle(HANDLE handle)
 	if (!CommIsHandled(handle))
 		return FALSE;
 
-	if (pComm->PendingEvents & SERIAL_EV_WINPR_WAITING)
-	{
-		ULONG WaitMask = 0;
-		DWORD BytesReturned = 0;
-
-		/* ensures to gracefully stop the WAIT_ON_MASK's loop */
-		if (!CommDeviceIoControl(handle, IOCTL_SERIAL_SET_WAIT_MASK, &WaitMask, sizeof(ULONG), NULL,
-		                         0, &BytesReturned, NULL))
-		{
-			CommLog_Print(WLOG_WARN, "failure to WAIT_ON_MASK's loop!");
-		}
-	}
-
 	DeleteCriticalSection(&pComm->ReadLock);
 	DeleteCriticalSection(&pComm->WriteLock);
 	DeleteCriticalSection(&pComm->EventsLock);
@@ -1413,6 +1491,7 @@ BOOL CommCloseHandle(HANDLE handle)
 	return TRUE;
 }
 
+#if defined(WINPR_HAVE_SYS_EVENTFD_H)
 #ifndef WITH_EVENTFD_READ_WRITE
 int eventfd_read(int fd, eventfd_t* value)
 {
@@ -1424,5 +1503,4 @@ int eventfd_write(int fd, eventfd_t value)
 	return (write(fd, &value, sizeof(value)) == sizeof(value)) ? 0 : -1;
 }
 #endif
-
-#endif /* __linux__ */
+#endif

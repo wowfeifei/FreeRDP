@@ -1,8 +1,8 @@
 #!/bin/bash
 
 SCM_URL=https://github.com/FFmpeg/FFmpeg/archive
-SCM_TAG=n4.4.1
-
+SCM_TAG=n7.0.1
+SCM_HASH=8dab1da0c7ebccb2dce99265901f22ac40f8e0fbbe4a89a368d7645f2e79caa0
 OLD_PATH=$PATH
 
 source $(dirname "${BASH_SOURCE[0]}")/android-build-common.sh
@@ -122,10 +122,47 @@ function build {
         ${ARCH_OPTIONS} \
         --enable-cross-compile \
         --enable-pic \
-        --enable-jni --enable-mediacodec \
+        --enable-jni \
+	--enable-mediacodec \
         --enable-shared \
+        --disable-vulkan \
         --disable-stripping \
-        --disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-avformat
+        --disable-programs \
+	--disable-doc \
+	--disable-avdevice \
+	--disable-avfilter \
+	--disable-avformat \
+	--disable-everything \
+	--enable-encoder=aac \
+	--enable-encoder=libfdk_aac \
+	--enable-encoder=libgsm \
+	--enable-encoder=libgsm_ms \
+	--enable-encoder=libopenh264 \
+	--enable-encoder=libopus \
+	--enable-encoder=pcm_alaw \
+	--enable-encoder=pcm_mulaw \
+	--enable-encoder=pcm_s16le \
+	--enable-encoder=pcm_u16le \
+	--enable-encoder=h264 \
+	--enable-encoder=h264_omx \
+	--enable-encoder=h264_mediacodec \
+	--enable-encoder=h264_vulkan \
+	--enable-decoder=aac \
+	--enable-decoder=aac_mediacodec \
+	--enable-decoder=adpcm_g722 \
+	--enable-decoder=adpcm_g726 \
+	--enable-decoder=adpcm_g726le \
+	--enable-decoder=gsm \
+	--enable-decoder=gsm_ms \
+	--enable-decoder=mp3 \
+	--enable-decoder=mp3_mediacodec \
+	--enable-decoder=h264 \
+	--enable-decoder=h264_mediacodec \
+	--enable-decoder=libopus \
+	--enable-decoder=pcm_alaw \
+	--enable-decoder=pcm_mulaw \
+	--enable-decoder=pcm_s16le \
+	--enable-decoder=pcm_u16le
 
     common_run make clean
     common_run make -j
@@ -134,8 +171,7 @@ function build {
 
 # Run the main program.
 common_parse_arguments $@
-common_check_requirements
-common_update $SCM_URL $SCM_TAG $BUILD_SRC
+common_update $SCM_URL $SCM_TAG $BUILD_SRC $SCM_HASH
 
 HOST_PKG_CONFIG_PATH=`command -v pkg-config`
 if [ -z ${HOST_PKG_CONFIG_PATH} ]; then

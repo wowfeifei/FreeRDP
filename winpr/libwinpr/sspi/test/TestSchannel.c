@@ -218,12 +218,12 @@ static int schannel_send(PSecurityFunctionTable table, HANDLE hPipe, PCtxtHandle
 	BYTE* ioBuffer;
 	UINT32 ioBufferLength;
 	BYTE* pMessageBuffer;
-	SecBuffer Buffers[4];
+	SecBuffer Buffers[4] = { 0 };
 	SecBufferDesc Message;
 	SECURITY_STATUS status;
 	DWORD NumberOfBytesWritten;
-	SecPkgContext_StreamSizes StreamSizes;
-	ZeroMemory(&StreamSizes, sizeof(SecPkgContext_StreamSizes));
+	SecPkgContext_StreamSizes StreamSizes = { 0 };
+
 	status = table->QueryContextAttributes(phContext, SECPKG_ATTR_STREAM_SIZES, &StreamSizes);
 	ioBufferLength = StreamSizes.cbHeader + StreamSizes.cbMaximumMessage + StreamSizes.cbTrailer;
 	ioBuffer = (BYTE*)calloc(1, ioBufferLength);
@@ -278,12 +278,12 @@ static int schannel_recv(PSecurityFunctionTable table, HANDLE hPipe, PCtxtHandle
 	BYTE* ioBuffer;
 	UINT32 ioBufferLength;
 	// BYTE* pMessageBuffer;
-	SecBuffer Buffers[4];
+	SecBuffer Buffers[4] = { 0 };
 	SecBufferDesc Message;
 	SECURITY_STATUS status;
 	DWORD NumberOfBytesRead;
-	SecPkgContext_StreamSizes StreamSizes;
-	ZeroMemory(&StreamSizes, sizeof(SecPkgContext_StreamSizes));
+	SecPkgContext_StreamSizes StreamSizes = { 0 };
+
 	status = table->QueryContextAttributes(phContext, SECPKG_ATTR_STREAM_SIZES, &StreamSizes);
 	ioBufferLength = StreamSizes.cbHeader + StreamSizes.cbMaximumMessage + StreamSizes.cbTrailer;
 	ioBuffer = (BYTE*)calloc(1, ioBufferLength);
@@ -344,7 +344,7 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 	UINT32 cbMaxToken;
 	UINT32 fContextReq;
 	ULONG fContextAttr;
-	SCHANNEL_CRED cred;
+	SCHANNEL_CRED cred = { 0 };
 	CtxtHandle context;
 	CredHandle credentials;
 	DWORD cchNameString;
@@ -352,8 +352,8 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 	HCERTSTORE hCertStore;
 	PCCERT_CONTEXT pCertContext;
 	PSecBuffer pSecBuffer;
-	SecBuffer SecBuffer_in[2];
-	SecBuffer SecBuffer_out[2];
+	SecBuffer SecBuffer_in[2] = { 0 };
+	SecBuffer SecBuffer_out[2] = { 0 };
 	SecBufferDesc SecBufferDesc_in;
 	SecBufferDesc SecBufferDesc_out;
 	DWORD NumberOfBytesRead;
@@ -407,7 +407,6 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 	cchNameString = CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL,
 	                                  pszNameString, cchNameString);
 	_tprintf(_T("Certificate Name: %s\n"), pszNameString);
-	ZeroMemory(&cred, sizeof(SCHANNEL_CRED));
 	cred.dwVersion = SCHANNEL_CRED_VERSION;
 	cred.cCreds = 1;
 	cred.paCred = &pCertContext;
@@ -593,14 +592,13 @@ out_fail:
 int TestSchannel(int argc, char* argv[])
 {
 	int count;
-	DWORD index;
 	ALG_ID algId;
 	HANDLE thread;
 	BYTE* lpTokenIn;
 	BYTE* lpTokenOut;
 	TimeStamp expiry;
 	UINT32 cbMaxToken;
-	SCHANNEL_CRED cred;
+	SCHANNEL_CRED cred = { 0 };
 	UINT32 fContextReq;
 	ULONG fContextAttr;
 	CtxtHandle context;
@@ -608,16 +606,12 @@ int TestSchannel(int argc, char* argv[])
 	SECURITY_STATUS status;
 	PSecPkgInfo pPackageInfo;
 	PSecBuffer pSecBuffer;
-	SecBuffer SecBuffer_in[2];
-	SecBuffer SecBuffer_out[1];
-	SecBufferDesc SecBufferDesc_in;
-	SecBufferDesc SecBufferDesc_out;
 	PSecurityFunctionTable table;
 	DWORD NumberOfBytesRead;
 	DWORD NumberOfBytesWritten;
-	SecPkgCred_SupportedAlgs SupportedAlgs;
-	SecPkgCred_CipherStrengths CipherStrengths;
-	SecPkgCred_SupportedProtocols SupportedProtocols;
+	SecPkgCred_SupportedAlgs SupportedAlgs = { 0 };
+	SecPkgCred_CipherStrengths CipherStrengths = { 0 };
+	SecPkgCred_SupportedProtocols SupportedProtocols = { 0 };
 	return 0; /* disable by default - causes crash */
 	sspi_GlobalInit();
 	dump_test_certificate_files();
@@ -652,7 +646,6 @@ int TestSchannel(int argc, char* argv[])
 	}
 
 	cbMaxToken = pPackageInfo->cbMaxToken;
-	ZeroMemory(&cred, sizeof(SCHANNEL_CRED));
 	cred.dwVersion = SCHANNEL_CRED_VERSION;
 	cred.cCreds = 0;
 	cred.paCred = NULL;
@@ -671,7 +664,6 @@ int TestSchannel(int argc, char* argv[])
 		return -1;
 	}
 
-	ZeroMemory(&SupportedAlgs, sizeof(SecPkgCred_SupportedAlgs));
 	status =
 	    table->QueryCredentialsAttributes(&credentials, SECPKG_ATTR_SUPPORTED_ALGS, &SupportedAlgs);
 
@@ -689,7 +681,7 @@ int TestSchannel(int argc, char* argv[])
 	 */
 	printf("SupportedAlgs: %" PRIu32 "\n", SupportedAlgs.cSupportedAlgs);
 
-	for (index = 0; index < SupportedAlgs.cSupportedAlgs; index++)
+	for (DWORD index = 0; index < SupportedAlgs.cSupportedAlgs; index++)
 	{
 		algId = SupportedAlgs.palgSupportedAlgs[index];
 		printf("\t0x%08" PRIX32 " CLASS: %" PRIu32 " TYPE: %" PRIu32 " SID: %" PRIu32 "\n", algId,
@@ -697,7 +689,6 @@ int TestSchannel(int argc, char* argv[])
 	}
 
 	printf("\n");
-	ZeroMemory(&CipherStrengths, sizeof(SecPkgCred_CipherStrengths));
 	status = table->QueryCredentialsAttributes(&credentials, SECPKG_ATTR_CIPHER_STRENGTHS,
 	                                           &CipherStrengths);
 
@@ -711,7 +702,6 @@ int TestSchannel(int argc, char* argv[])
 	/* CipherStrengths: Minimum: 40 Maximum: 256 */
 	printf("CipherStrengths: Minimum: %" PRIu32 " Maximum: %" PRIu32 "\n",
 	       CipherStrengths.dwMinimumCipherStrength, CipherStrengths.dwMaximumCipherStrength);
-	ZeroMemory(&SupportedProtocols, sizeof(SecPkgCred_SupportedProtocols));
 	status = table->QueryCredentialsAttributes(&credentials, SECPKG_ATTR_SUPPORTED_PROTOCOLS,
 	                                           &SupportedProtocols);
 
@@ -738,14 +728,14 @@ int TestSchannel(int argc, char* argv[])
 		printf("Memory allocation failed\n");
 		return -1;
 	}
-	ZeroMemory(&SecBuffer_in, sizeof(SecBuffer_in));
-	ZeroMemory(&SecBuffer_out, sizeof(SecBuffer_out));
-	ZeroMemory(&SecBufferDesc_in, sizeof(SecBufferDesc));
-	ZeroMemory(&SecBufferDesc_out, sizeof(SecBufferDesc));
 	g_ClientWait = FALSE;
 
 	do
 	{
+		SecBuffer SecBuffer_in[2] = { 0 };
+		SecBuffer SecBuffer_out[1] = { 0 };
+		SecBufferDesc SecBufferDesc_in = { 0 };
+		SecBufferDesc SecBufferDesc_out = { 0 };
 		if (g_ClientWait)
 		{
 			if (!ReadFile(g_ClientReadPipe, lpTokenIn, cbMaxToken, &NumberOfBytesRead, NULL))
@@ -840,7 +830,7 @@ int TestSchannel(int argc, char* argv[])
 		                  sizeof(test_DummyMessage)) < 0)
 			break;
 
-		for (index = 0; index < sizeof(test_DummyMessage); index++)
+		for (DWORD index = 0; index < sizeof(test_DummyMessage); index++)
 		{
 			BYTE b, ln, hn;
 			b = test_DummyMessage[index];
@@ -858,7 +848,7 @@ int TestSchannel(int argc, char* argv[])
 
 	schannel_send(table, g_ServerWritePipe, &context, test_LastDummyMessage,
 	              sizeof(test_LastDummyMessage));
-	WaitForSingleObject(thread, INFINITE);
+	(void)WaitForSingleObject(thread, INFINITE);
 	sspi_GlobalFinish();
 	return 0;
 }

@@ -15,20 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-winpr_module_add(
-	synthetic.c
-	clipboard.c
-	clipboard.h)
+winpr_module_add(synthetic.c clipboard.c clipboard.h synthetic_file.h synthetic_file.c)
 
-# MinGW has unistd.h
-if(HAVE_UNISTD_H AND NOT WIN32)
-	winpr_definition_add(-DWITH_WCLIPBOARD_POSIX)
-	winpr_module_add(
-		posix.h
-		posix.c
-	)
-endif()
-
-if(BUILD_TESTING)
-	add_subdirectory(test)
+if(BUILD_TESTING_INTERNAL OR BUILD_TESTING)
+  add_subdirectory(test)
 endif()

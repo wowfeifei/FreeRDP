@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 SCRIPT_PATH=$(dirname "${BASH_SOURCE[0]}")
 SCRIPT_PATH=$(realpath "$SCRIPT_PATH")
@@ -8,11 +8,11 @@ case "$(uname -s)" in
 
    Darwin)
 		 FIND_ARGS="-perm +111 $FIND_ARGS"
-     ;;
+	 ;;
 
    *)
 		 FIND_ARGS="-executable $FIND_ARGS"
-     ;;
+	 ;;
 esac
 
 if [ -z $BUILD_ARCH ]; then
@@ -24,7 +24,7 @@ if [ -z $NDK_TARGET ]; then
 fi
 
 if [ -z $CMAKE_PROGRAM ]; then
-	CMAKE_PROGRAM=$(find $ANDROID_SDK/cmake -name cmake $FIND_ARGS)
+	CMAKE_PROGRAM="cmake-missing"
 fi
 
 if [ -z $CCACHE ]; then
@@ -32,11 +32,11 @@ if [ -z $CCACHE ]; then
 fi
 
 if [ -z $ANDROID_NDK ]; then
-	ANDROID_NDK="missing"
+	ANDROID_NDK="ndk-missing"
 fi
 
 if [ -z $ANDROID_SDK ]; then
-	ANDROID_SDK="missing"
+	ANDROID_SDK="sdk-missing"
 fi
 
 if [ -z $BUILD_DST ]; then
@@ -53,6 +53,10 @@ fi
 
 if [ -z $SCM_TAG ]; then
 	SCM_TAG=master
+fi
+
+if [ -z $SCM_HASH ]; then
+    SCM_HASH="missing"
 fi
 
 CLEAN_BUILD_DIR=0
@@ -73,6 +77,8 @@ function common_help {
 	echo "			SCM_URL=$SCM_URL"
 	echo "	--tag	The SCM branch or tag to check out"
 	echo "			SCM_TAG=$SCM_TAG"
+	echo "	--hash	The SCM commit or hash to check out"
+	echo "			SCM_HASH=$SCM_HASH"
 	echo "	--clean	Clean the destination before build"
 	echo "	--help	Display this help"
 	exit 0
@@ -84,77 +90,9 @@ function common_run {
 	RES=$?
 	if [[ $RES -ne 0 ]];
 	then
-		echo "[ERROR] $@ retured $RES"
+		echo "[ERROR] $@ returned $RES"
 		exit 1
 	fi
-}
-
-function common_parse_arguments {
-	while [[ $# > 0 ]]
-	do
-		key="$1"
-		case $key in
-		    --conf)
-            source "$2" || exit 1
-            shift
-            ;;
-
-			--target)
-			NDK_TARGET="$2"
-			shift
-			;;
-
-			--ndk)
-			ANDROID_NDK="$2"
-			shift
-			;;
-
-			--sdk)
-			ANDROID_SDK="$2"
-			CMAKE_PROGRAM=$(find $ANDROID_SDK/cmake -name cmake $FIND_ARGS)
-			shift
-			;;
-
-			--arch)
-			BUILD_ARCH="$2"
-			shift
-			;;
-
-			--dst)
-			BUILD_DST="$2"
-			shift
-			;;
-
-			--src)
-			BUILD_SRC="$2"
-			shift
-			;;
-
-			--url)
-			SCM_URL="$2"
-			shift
-			;;
-
-			--tag)
-			SCM_TAG="$2"
-			shift
-			;;
-
-			--clean)
-			CLEAN_BUILD_DIR=1
-			shift
-			;;
-
-			--help)
-			common_help
-			shift
-			;;
-
-			*) # Unknown
-			;;
-		esac
-		shift
-	done
 }
 
 function common_check_requirements {
@@ -189,7 +127,13 @@ function common_check_requirements {
 
 	if [[ -z $SCM_TAG ]];
 	then
-		echo "SCM TAG / BRANCH not defined! Define SCM_TAG"
+		echo "SCM_TAG / BRANCH not defined! Define SCM_TAG"
+		exit 1
+	fi
+
+	if [[ -z $SCM_HASH ]];
+	then
+		echo "SCM_HASH not defined! Define SCM_HASH"
 		exit 1
 	fi
 
@@ -199,19 +143,15 @@ function common_check_requirements {
 		exit 1
 	fi
 
-	if [ -x $ANDROID_NDK/ndk-build ]; then
-		NDK_BUILD=$ANDROID_NDK/ndk-build
-	else
-		echo "ndk-build not found in NDK directory $ANDROID_NDK"
-		echo "assuming ndk-build is in path..."
-		NDK_BUILD=ndk-build
+	if [ -z $CMAKE_PROGRAM ] || [ "$CMAKE_PROGRAM" == "cmake-missing" ]; then
+		CMAKE_PROGRAM=$(find $ANDROID_SDK/cmake -name cmake $FIND_ARGS)
+		if [ -z $CMAKE_PROGRAM ]; then
+			echo "CMake not found in $ANDROID_SDK, install CMake from the android SDK!"
+			exit 1
+		fi
 	fi
 
-    if [ -z $CMAKE_PROGRAM ]; then
-			CMAKE_PROGRAM=$(find $ANDROID_SDK/cmake -name cmake $FIND_ARGS)
-    fi
-
-	for CMD in make git $CMAKE_PROGRAM $NDK_BUILD
+	for CMD in make git $CMAKE_PROGRAM
 	do
 		if ! type $CMD >/dev/null; then
 			echo "Command $CMD not found. Install and add it to the PATH."
@@ -229,8 +169,82 @@ function common_check_requirements {
 	fi
 }
 
+function common_parse_arguments {
+	while [[ $# > 0 ]]
+	do
+		key="$1"
+		case $key in
+			--conf)
+		        source "$2" || exit 1
+		        shift
+		        ;;
+
+			--target)
+			NDK_TARGET="$2"
+			shift
+			;;
+
+			--ndk)
+			ANDROID_NDK="$2"
+			shift
+			;;
+
+			--sdk)
+			ANDROID_SDK="$2"
+			shift
+			;;
+
+			--arch)
+			BUILD_ARCH="$2"
+			shift
+			;;
+
+			--dst)
+			BUILD_DST="$2"
+			shift
+			;;
+
+			--src)
+			BUILD_SRC="$2"
+			shift
+			;;
+
+			--url)
+			SCM_URL="$2"
+			shift
+			;;
+
+			--tag)
+			SCM_TAG="$2"
+			shift
+			;;
+
+			--hash)
+			SCM_HASH="$2"
+			shift
+			;;
+
+			--clean)
+			CLEAN_BUILD_DIR=1
+			shift
+			;;
+
+			--help)
+			common_help
+			shift
+			;;
+
+			*) # Unknown
+			;;
+		esac
+		shift
+	done
+
+    common_check_requirements
+}
+
 function common_update {
-	if [ $# -ne 3 ];
+	if [ $# -ne 4 ];
 	then
 		echo "Invalid arguments to update function $@"
 		exit 1
@@ -238,18 +252,32 @@ function common_update {
 	SCM_URL=$1
 	SCM_TAG=$2
 	BUILD_SRC=$3
+	SCM_HASH=$4
 
 	echo "Preparing checkout..."
 	BASE=$(pwd)
-	CACHE=$SCRIPT_PATH/../cache
+	CACHE=$(realpath $SCRIPT_PATH/../cache)
 	common_run mkdir -p $CACHE
 	TARFILE="$CACHE/$SCM_TAG.tar.gz"
 
-
 	if [[ ! -f "$TARFILE" ]];
 	then
-		common_run wget -O "$TARFILE" "$SCM_URL/$SCM_TAG.tar.gz"
+		WGET=$(which wget)
+		CURL=$(which curl)
+		if [ -x "$CURL" ];
+		then
+			common_run $CURL -L -o "$TARFILE" "$SCM_URL/$SCM_TAG.tar.gz"
+		elif [ -x "$WGET" ];
+		then
+			common_run $WGET -O "$TARFILE" "$SCM_URL/$SCM_TAG.tar.gz"
+		else
+			echo "Neither wget nor curl installed, aborting"
+			exit -1
+		fi
 	fi
+
+	echo "$SCM_HASH $TARFILE" > $TARFILE.sha256sum
+	common_run sha256sum -c $TARFILE.sha256sum
 
 	if [[ -d $BUILD_SRC ]];
 	then

@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.freerdp.afreerdp"
     android:installLocation="auto">
 
     <application
@@ -9,8 +8,6 @@
         android:icon="@drawable/icon_launcher_freerdp"
         android:label="aFreeRDP"
         android:resizeableActivity="true">
-
-
 
         <!-- Main activity -->
         <activity
@@ -86,6 +83,7 @@
         </activity>
 
         <activity-alias
+            android:exported="true"
             android:name=".services.SessionRequestHandlerActivity"
             android:targetActivity="com.freerdp.freerdpcore.services.SessionRequestHandlerActivity">
             <intent-filter>
@@ -98,7 +96,8 @@
 
         <provider
             android:name="com.freerdp.freerdpcore.services.FreeRDPSuggestionProvider"
-            android:authorities="com.freerdp.afreerdp.services.freerdpsuggestionprovider"></provider>
+            android:authorities="com.freerdp.afreerdp.services.freerdpsuggestionprovider"
+            android:exported="false"></provider>
 
         <meta-data android:name="com.samsung.android.keepalive.density" android:value="true"/>
 

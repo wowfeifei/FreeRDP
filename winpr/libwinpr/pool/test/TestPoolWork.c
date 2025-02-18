@@ -1,4 +1,5 @@
 
+#include <winpr/wtypes.h>
 #include <winpr/crt.h>
 #include <winpr/pool.h>
 #include <winpr/interlocked.h>
@@ -7,29 +8,26 @@ static LONG count = 0;
 
 static void CALLBACK test_WorkCallback(PTP_CALLBACK_INSTANCE instance, void* context, PTP_WORK work)
 {
-	int index;
-	BYTE a[1024];
-	BYTE b[1024];
-	BYTE c[1024];
 	printf("Hello %s: %03" PRId32 " (thread: 0x%08" PRIX32 ")\n", (char*)context,
 	       InterlockedIncrement(&count), GetCurrentThreadId());
 
-	for (index = 0; index < 100; index++)
+	for (int index = 0; index < 100; index++)
 	{
-		ZeroMemory(a, 1024);
-		ZeroMemory(b, 1024);
-		ZeroMemory(c, 1024);
-		FillMemory(a, 1024, 0xAA);
-		FillMemory(b, 1024, 0xBB);
-		CopyMemory(c, a, 1024);
-		CopyMemory(c, b, 1024);
+		BYTE a[1024];
+		BYTE b[1024];
+		BYTE c[1024] = { 0 };
+
+		FillMemory(a, ARRAYSIZE(a), 0xAA);
+		FillMemory(b, ARRAYSIZE(b), 0xBB);
+
+		CopyMemory(c, a, ARRAYSIZE(a));
+		CopyMemory(c, b, ARRAYSIZE(b));
 	}
 }
 
 static BOOL test1(void)
 {
-	int index;
-	PTP_WORK work;
+	PTP_WORK work = NULL;
 	printf("Global Thread Pool\n");
 	work = CreateThreadpoolWork(test_WorkCallback, "world", NULL);
 
@@ -45,7 +43,7 @@ static BOOL test1(void)
 	 * thread pool may throttle the threads.
 	 */
 
-	for (index = 0; index < 10; index++)
+	for (int index = 0; index < 10; index++)
 		SubmitThreadpoolWork(work);
 
 	WaitForThreadpoolWorkCallbacks(work, FALSE);
@@ -56,9 +54,8 @@ static BOOL test1(void)
 static BOOL test2(void)
 {
 	BOOL rc = FALSE;
-	int index;
-	PTP_POOL pool;
-	PTP_WORK work;
+	PTP_POOL pool = NULL;
+	PTP_WORK work = NULL;
 	PTP_CLEANUP_GROUP cleanupGroup = NULL;
 	TP_CALLBACK_ENVIRON environment;
 	printf("Private Thread Pool\n");
@@ -95,7 +92,7 @@ static BOOL test2(void)
 		goto fail;
 	}
 
-	for (index = 0; index < 10; index++)
+	for (int index = 0; index < 10; index++)
 		SubmitThreadpoolWork(work);
 
 	WaitForThreadpoolWorkCallbacks(work, FALSE);

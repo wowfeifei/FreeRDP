@@ -25,6 +25,7 @@
 #include <freerdp/log.h>
 #include <freerdp/codec/color.h>
 #include <freerdp/codec/region.h>
+#include <freerdp/server/server-common.h>
 
 #include "win_shadow.h"
 
@@ -40,7 +41,7 @@
 static BOOL win_shadow_input_synchronize_event(rdpShadowSubsystem* subsystem,
                                                rdpShadowClient* client, UINT32 flags)
 {
-	WLog_WARN(TAG, "%s: TODO: Implement!", __FUNCTION__);
+	WLog_WARN(TAG, "TODO: Implement!");
 	return TRUE;
 }
 
@@ -94,10 +95,10 @@ static BOOL win_shadow_input_mouse_event(rdpShadowSubsystem* subsystem, rdpShado
                                          UINT16 flags, UINT16 x, UINT16 y)
 {
 	UINT rc = 1;
-	INPUT event;
+	INPUT event = { 0 };
 	float width;
 	float height;
-	ZeroMemory(&event, sizeof(INPUT));
+
 	event.type = INPUT_MOUSE;
 
 	if (flags & (PTR_FLAGS_WHEEL | PTR_FLAGS_HWHEEL))
@@ -179,10 +180,9 @@ static BOOL win_shadow_input_extended_mouse_event(rdpShadowSubsystem* subsystem,
                                                   UINT16 y)
 {
 	UINT rc = 1;
-	INPUT event;
+	INPUT event = { 0 };
 	float width;
 	float height;
-	ZeroMemory(&event, sizeof(INPUT));
 
 	if ((flags & PTR_XFLAGS_BUTTON1) || (flags & PTR_XFLAGS_BUTTON2))
 	{
@@ -314,8 +314,9 @@ static int win_shadow_surface_copy(winShadowSubsystem* subsystem)
 	if (status <= 0)
 		return status;
 
-	if (!freerdp_image_copy(surface->data, surface->format, surface->scanline, x, y, width, height,
-	                        pDstData, DstFormat, nDstStep, x, y, NULL, FREERDP_FLIP_NONE))
+	if (!freerdp_image_copy_no_overlap(surface->data, surface->format, surface->scanline, x, y,
+	                                   width, height, pDstData, DstFormat, nDstStep, x, y, NULL,
+	                                   FREERDP_FLIP_NONE))
 		return ERROR_INTERNAL_ERROR;
 
 	ArrayList_Lock(server->clients);
@@ -352,8 +353,8 @@ static DWORD WINAPI win_shadow_subsystem_thread(LPVOID arg)
 		if (WaitForSingleObject(subsystem->RdpUpdateEnterEvent, 0) == WAIT_OBJECT_0)
 		{
 			win_shadow_surface_copy(subsystem);
-			ResetEvent(subsystem->RdpUpdateEnterEvent);
-			SetEvent(subsystem->RdpUpdateLeaveEvent);
+			(void)ResetEvent(subsystem->RdpUpdateEnterEvent);
+			(void)SetEvent(subsystem->RdpUpdateLeaveEvent);
 		}
 	}
 
@@ -425,8 +426,8 @@ static UINT32 win_shadow_enum_monitors(MONITOR_DEF* monitors, UINT32 maxMonitors
 	DWORD iDevNum = 0;
 	int numMonitors = 0;
 	MONITOR_DEF* monitor;
-	DISPLAY_DEVICE displayDevice;
-	ZeroMemory(&displayDevice, sizeof(DISPLAY_DEVICE));
+	DISPLAY_DEVICE displayDevice = { 0 };
+
 	displayDevice.cb = sizeof(DISPLAY_DEVICE);
 
 	if (EnumDisplayDevices(NULL, iDevNum, &displayDevice, 0))
@@ -538,8 +539,17 @@ static rdpShadowSubsystem* win_shadow_subsystem_new(void)
 	return &subsystem->base;
 }
 
-FREERDP_API int Win_ShadowSubsystemEntry(RDP_SHADOW_ENTRY_POINTS* pEntryPoints)
+FREERDP_API const char* ShadowSubsystemName(void)
 {
+	return "Win";
+}
+
+FREERDP_API int ShadowSubsystemEntry(RDP_SHADOW_ENTRY_POINTS* pEntryPoints)
+{
+	const char name[] = "windows shadow subsystem";
+	const char* arg[] = { name };
+
+	freerdp_server_warn_unmaintained(ARRAYSIZE(arg), arg);
 	pEntryPoints->New = win_shadow_subsystem_new;
 	pEntryPoints->Free = win_shadow_subsystem_free;
 	pEntryPoints->Init = win_shadow_subsystem_init;

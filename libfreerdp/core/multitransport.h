@@ -23,20 +23,37 @@
 typedef struct rdp_multitransport rdpMultitransport;
 
 #include "rdp.h"
+#include "state.h"
 
 #include <freerdp/freerdp.h>
 #include <freerdp/api.h>
 
 #include <winpr/stream.h>
 
-struct rdp_multitransport
+typedef enum
 {
-	UINT32 placeholder;
-};
+	INITIATE_REQUEST_PROTOCOL_UDPFECR = 0x01,
+	INITIATE_REQUEST_PROTOCOL_UDPFECL = 0x02
+} MultitransportRequestProtocol;
 
-FREERDP_LOCAL int rdp_recv_multitransport_packet(rdpRdp* rdp, wStream* s);
+typedef state_run_t (*MultiTransportRequestCb)(rdpMultitransport* multi, UINT32 reqId,
+                                               UINT16 reqProto, const BYTE* cookie);
+typedef state_run_t (*MultiTransportResponseCb)(rdpMultitransport* multi, UINT32 reqId,
+                                                UINT32 hrResponse);
 
-FREERDP_LOCAL rdpMultitransport* multitransport_new(void);
-FREERDP_LOCAL void multitransport_free(rdpMultitransport* multitransport);
+#define RDPUDP_COOKIE_LEN 16
+#define RDPUDP_COOKIE_HASHLEN 32
+
+FREERDP_LOCAL state_run_t multitransport_recv_request(rdpMultitransport* multi, wStream* s);
+FREERDP_LOCAL state_run_t multitransport_server_request(rdpMultitransport* multi, UINT16 reqProto);
+
+FREERDP_LOCAL state_run_t multitransport_recv_response(rdpMultitransport* multi, wStream* s);
+FREERDP_LOCAL BOOL multitransport_client_send_response(rdpMultitransport* multi, UINT32 reqId,
+                                                       HRESULT hr);
+
+FREERDP_LOCAL void multitransport_free(rdpMultitransport* multi);
+
+WINPR_ATTR_MALLOC(multitransport_free, 1)
+FREERDP_LOCAL rdpMultitransport* multitransport_new(rdpRdp* rdp, UINT16 protocol);
 
 #endif /* FREERDP_LIB_CORE_MULTITRANSPORT_H */

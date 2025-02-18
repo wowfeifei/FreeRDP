@@ -19,18 +19,19 @@
 
 #include <winpr/config.h>
 
+#include <winpr/assert.h>
 #include <winpr/crt.h>
 #include <winpr/synch.h>
 
 #include <winpr/winsock.h>
 
-#ifdef HAVE_UNISTD_H
+#ifdef WINPR_HAVE_UNISTD_H
 #include <unistd.h>
 #endif
-#ifdef HAVE_SYS_FILIO_H
+#ifdef WINPR_HAVE_SYS_FILIO_H
 #include <sys/filio.h>
 #endif
-#ifdef HAVE_SYS_SOCKIO_H
+#ifdef WINPR_HAVE_SYS_SOCKIO_H
 #include <sys/sockio.h>
 #endif
 
@@ -236,8 +237,8 @@ PCSTR winpr_inet_ntop(INT Family, PVOID pAddr, PSTR pStringBuf, size_t StringBuf
 {
 	if (Family == AF_INET)
 	{
-		struct sockaddr_in in;
-		memset(&in, 0, sizeof(in));
+		struct sockaddr_in in = { 0 };
+
 		in.sin_family = AF_INET;
 		memcpy(&in.sin_addr, pAddr, sizeof(struct in_addr));
 		getnameinfo((struct sockaddr*)&in, sizeof(struct sockaddr_in), pStringBuf, StringBufSize,
@@ -246,8 +247,8 @@ PCSTR winpr_inet_ntop(INT Family, PVOID pAddr, PSTR pStringBuf, size_t StringBuf
 	}
 	else if (Family == AF_INET6)
 	{
-		struct sockaddr_in6 in;
-		memset(&in, 0, sizeof(in));
+		struct sockaddr_in6 in = { 0 };
+
 		in.sin6_family = AF_INET6;
 		memcpy(&in.sin6_addr, pAddr, sizeof(struct in_addr6));
 		getnameinfo((struct sockaddr*)&in, sizeof(struct sockaddr_in6), pStringBuf, StringBufSize,
@@ -288,7 +289,6 @@ INT winpr_inet_pton(INT Family, PCSTR pszAddrString, PVOID pAddrBuf)
 
 #include <netdb.h>
 #include <errno.h>
-#include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -301,6 +301,8 @@ INT winpr_inet_pton(INT Family, PCSTR pszAddrString, PVOID pAddrBuf)
 
 int WSAStartup(WORD wVersionRequired, LPWSADATA lpWSAData)
 {
+	WINPR_ASSERT(lpWSAData);
+
 	ZeroMemory(lpWSAData, sizeof(WSADATA));
 	lpWSAData->wVersion = wVersionRequired;
 	lpWSAData->wHighVersion = MAKEWORD(2, 2);
@@ -491,6 +493,8 @@ void WSASetLastError(int iError)
 
 		case WSAEREMOTE:
 			errno = EREMOTE;
+			break;
+		default:
 			break;
 	}
 }
@@ -690,6 +694,8 @@ int WSAGetLastError(void)
 			iError = WSAECONNRESET;
 			break;
 #endif
+		default:
+			break;
 	}
 
 	/**
@@ -724,7 +730,7 @@ BOOL WSASetEvent(HANDLE hEvent)
 	return SetEvent(hEvent);
 }
 
-BOOL WSAResetEvent(HANDLE hEvent)
+BOOL WSAResetEvent(WINPR_ATTR_UNUSED HANDLE hEvent)
 {
 	/* POSIX systems auto reset the socket,
 	 * if no more data is available. */
@@ -733,8 +739,7 @@ BOOL WSAResetEvent(HANDLE hEvent)
 
 BOOL WSACloseEvent(HANDLE hEvent)
 {
-	BOOL status;
-	status = CloseHandle(hEvent);
+	BOOL status = CloseHandle(hEvent);
 
 	if (!status)
 		SetLastError(6);
@@ -759,7 +764,7 @@ int WSAEventSelect(SOCKET s, WSAEVENT hEventObject, LONG lNetworkEvents)
 	if (lNetworkEvents & FD_WRITE)
 		mode |= WINPR_FD_WRITE;
 
-	if (SetEventFileDescriptor(hEventObject, s, mode) < 0)
+	if (SetEventFileDescriptor(hEventObject, (int)s, mode) < 0)
 		return SOCKET_ERROR;
 
 	return 0;
@@ -771,10 +776,11 @@ DWORD WSAWaitForMultipleEvents(DWORD cEvents, const HANDLE* lphEvents, BOOL fWai
 	return WaitForMultipleObjectsEx(cEvents, lphEvents, fWaitAll, dwTimeout, fAlertable);
 }
 
-SOCKET WSASocketA(int af, int type, int protocol, LPWSAPROTOCOL_INFOA lpProtocolInfo, GROUP g,
-                  DWORD dwFlags)
+SOCKET WSASocketA(int af, int type, int protocol,
+                  WINPR_ATTR_UNUSED LPWSAPROTOCOL_INFOA lpProtocolInfo, WINPR_ATTR_UNUSED GROUP g,
+                  WINPR_ATTR_UNUSED DWORD dwFlags)
 {
-	SOCKET s;
+	SOCKET s = 0;
 	s = _socket(af, type, protocol);
 	return s;
 }
@@ -785,28 +791,29 @@ SOCKET WSASocketW(int af, int type, int protocol, LPWSAPROTOCOL_INFOW lpProtocol
 	return WSASocketA(af, type, protocol, (LPWSAPROTOCOL_INFOA)lpProtocolInfo, g, dwFlags);
 }
 
-int WSAIoctl(SOCKET s, DWORD dwIoControlCode, LPVOID lpvInBuffer, DWORD cbInBuffer,
-             LPVOID lpvOutBuffer, DWORD cbOutBuffer, LPDWORD lpcbBytesReturned,
-             LPWSAOVERLAPPED lpOverlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
+int WSAIoctl(SOCKET s, DWORD dwIoControlCode, WINPR_ATTR_UNUSED LPVOID lpvInBuffer,
+             WINPR_ATTR_UNUSED DWORD cbInBuffer, LPVOID lpvOutBuffer, DWORD cbOutBuffer,
+             LPDWORD lpcbBytesReturned, WINPR_ATTR_UNUSED LPWSAOVERLAPPED lpOverlapped,
+             WINPR_ATTR_UNUSED LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine)
 {
-	int fd;
-	int index;
-	ULONG nFlags;
-	size_t offset;
-	size_t ifreq_len;
-	struct ifreq* ifreq;
-	struct ifconf ifconf;
-	char address[128];
-	char broadcast[128];
-	char netmask[128];
-	char buffer[4096];
-	int numInterfaces;
-	int maxNumInterfaces;
-	INTERFACE_INFO* pInterface;
-	INTERFACE_INFO* pInterfaces;
-	struct sockaddr_in* pAddress;
-	struct sockaddr_in* pBroadcast;
-	struct sockaddr_in* pNetmask;
+	int fd = 0;
+	int index = 0;
+	ULONG nFlags = 0;
+	size_t offset = 0;
+	size_t ifreq_len = 0;
+	struct ifreq* ifreq = NULL;
+	struct ifconf ifconf = { 0 };
+	char address[128] = { 0 };
+	char broadcast[128] = { 0 };
+	char netmask[128] = { 0 };
+	char buffer[4096] = { 0 };
+	size_t numInterfaces = 0;
+	size_t maxNumInterfaces = 0;
+	INTERFACE_INFO* pInterface = NULL;
+	INTERFACE_INFO* pInterfaces = NULL;
+	struct sockaddr_in* pAddress = NULL;
+	struct sockaddr_in* pBroadcast = NULL;
+	struct sockaddr_in* pNetmask = NULL;
 
 	if ((dwIoControlCode != SIO_GET_INTERFACE_LIST) ||
 	    (!lpvOutBuffer || !cbOutBuffer || !lpcbBytesReturned))
@@ -820,7 +827,6 @@ int WSAIoctl(SOCKET s, DWORD dwIoControlCode, LPVOID lpvInBuffer, DWORD cbInBuff
 	maxNumInterfaces = cbOutBuffer / sizeof(INTERFACE_INFO);
 #ifdef WSAIOCTL_IFADDRS
 	{
-		struct ifaddrs* ifa = NULL;
 		struct ifaddrs* ifap = NULL;
 
 		if (getifaddrs(&ifap) != 0)
@@ -832,7 +838,7 @@ int WSAIoctl(SOCKET s, DWORD dwIoControlCode, LPVOID lpvInBuffer, DWORD cbInBuff
 		index = 0;
 		numInterfaces = 0;
 
-		for (ifa = ifap; ifa; ifa = ifa->ifa_next)
+		for (struct ifaddrs* ifa = ifap; ifa; ifa = ifa->ifa_next)
 		{
 			pInterface = &pInterfaces[index];
 			pAddress = (struct sockaddr_in*)&pInterface->iiAddress;
@@ -985,7 +991,7 @@ int WSAIoctl(SOCKET s, DWORD dwIoControlCode, LPVOID lpvInBuffer, DWORD cbInBuff
 		inet_pton(ifreq->ifr_addr.sa_family, netmask, (void*)&pNetmask->sin_addr);
 		numInterfaces++;
 	next_ifreq:
-#if !defined(__linux__) && !defined(__sun__) && !defined(__CYGWIN__)
+#if !defined(__linux__) && !defined(__sun__) && !defined(__CYGWIN__) && !defined(EMSCRIPTEN)
 		ifreq_len = IFNAMSIZ + ifreq->ifr_addr.sa_len;
 #else
 		ifreq_len = sizeof(*ifreq);
@@ -1001,17 +1007,16 @@ int WSAIoctl(SOCKET s, DWORD dwIoControlCode, LPVOID lpvInBuffer, DWORD cbInBuff
 
 SOCKET _accept(SOCKET s, struct sockaddr* addr, int* addrlen)
 {
-	int status;
-	int fd = (int)s;
+	int fd = WINPR_ASSERTING_INT_CAST(int, s);
 	socklen_t s_addrlen = (socklen_t)*addrlen;
-	status = accept(fd, addr, &s_addrlen);
-	*addrlen = (socklen_t)s_addrlen;
-	return status;
+	const int status = accept(fd, addr, &s_addrlen);
+	*addrlen = (int)s_addrlen;
+	return (SOCKET)status;
 }
 
 int _bind(SOCKET s, const struct sockaddr* addr, int namelen)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	status = bind(fd, addr, (socklen_t)namelen);
 
@@ -1023,7 +1028,7 @@ int _bind(SOCKET s, const struct sockaddr* addr, int namelen)
 
 int closesocket(SOCKET s)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	status = close(fd);
 	return status;
@@ -1031,7 +1036,7 @@ int closesocket(SOCKET s)
 
 int _connect(SOCKET s, const struct sockaddr* name, int namelen)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	status = connect(fd, name, (socklen_t)namelen);
 
@@ -1041,13 +1046,14 @@ int _connect(SOCKET s, const struct sockaddr* name, int namelen)
 	return status;
 }
 
+// NOLINTNEXTLINE(readability-non-const-parameter)
 int _ioctlsocket(SOCKET s, long cmd, u_long* argp)
 {
 	int fd = (int)s;
 
 	if (cmd == FIONBIO)
 	{
-		int flags;
+		int flags = 0;
 
 		if (!argp)
 			return SOCKET_ERROR;
@@ -1058,9 +1064,9 @@ int _ioctlsocket(SOCKET s, long cmd, u_long* argp)
 			return SOCKET_ERROR;
 
 		if (*argp)
-			fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+			(void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 		else
-			fcntl(fd, F_SETFL, flags & ~(O_NONBLOCK));
+			(void)fcntl(fd, F_SETFL, flags & ~(O_NONBLOCK));
 	}
 
 	return 0;
@@ -1068,7 +1074,7 @@ int _ioctlsocket(SOCKET s, long cmd, u_long* argp)
 
 int _getpeername(SOCKET s, struct sockaddr* name, int* namelen)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	socklen_t s_namelen = (socklen_t)*namelen;
 	status = getpeername(fd, name, &s_namelen);
@@ -1078,7 +1084,7 @@ int _getpeername(SOCKET s, struct sockaddr* name, int* namelen)
 
 int _getsockname(SOCKET s, struct sockaddr* name, int* namelen)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	socklen_t s_namelen = (socklen_t)*namelen;
 	status = getsockname(fd, name, &s_namelen);
@@ -1088,17 +1094,18 @@ int _getsockname(SOCKET s, struct sockaddr* name, int* namelen)
 
 int _getsockopt(SOCKET s, int level, int optname, char* optval, int* optlen)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	socklen_t s_optlen = (socklen_t)*optlen;
 	status = getsockopt(fd, level, optname, (void*)optval, &s_optlen);
-	*optlen = (socklen_t)s_optlen;
+	*optlen = (int)s_optlen;
 	return status;
 }
 
 u_long _htonl(u_long hostlong)
 {
-	return htonl(hostlong);
+	WINPR_ASSERT(hostlong <= UINT32_MAX);
+	return htonl((UINT32)hostlong);
 }
 
 u_short _htons(u_short hostshort)
@@ -1108,17 +1115,18 @@ u_short _htons(u_short hostshort)
 
 unsigned long _inet_addr(const char* cp)
 {
-	return (long)inet_addr(cp);
+	return WINPR_ASSERTING_INT_CAST(unsigned long, inet_addr(cp));
 }
 
 char* _inet_ntoa(struct in_addr in)
 {
+	// NOLINTNEXTLINE(concurrency-mt-unsafe)
 	return inet_ntoa(in);
 }
 
 int _listen(SOCKET s, int backlog)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	status = listen(fd, backlog);
 	return status;
@@ -1126,7 +1134,8 @@ int _listen(SOCKET s, int backlog)
 
 u_long _ntohl(u_long netlong)
 {
-	return ntohl(netlong);
+	WINPR_ASSERT((netlong & 0xFFFFFFFF00000000ULL) == 0);
+	return ntohl((UINT32)netlong);
 }
 
 u_short _ntohs(u_short netshort)
@@ -1136,7 +1145,7 @@ u_short _ntohs(u_short netshort)
 
 int _recv(SOCKET s, char* buf, int len, int flags)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	status = (int)recv(fd, (void*)buf, (size_t)len, flags);
 	return status;
@@ -1144,7 +1153,7 @@ int _recv(SOCKET s, char* buf, int len, int flags)
 
 int _recvfrom(SOCKET s, char* buf, int len, int flags, struct sockaddr* from, int* fromlen)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	socklen_t s_fromlen = (socklen_t)*fromlen;
 	status = (int)recvfrom(fd, (void*)buf, (size_t)len, flags, from, &s_fromlen);
@@ -1155,7 +1164,7 @@ int _recvfrom(SOCKET s, char* buf, int len, int flags, struct sockaddr* from, in
 int _select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds,
             const struct timeval* timeout)
 {
-	int status;
+	int status = 0;
 	union
 	{
 		const struct timeval* cpv;
@@ -1172,7 +1181,7 @@ int _select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds,
 
 int _send(SOCKET s, const char* buf, int len, int flags)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	flags |= MSG_NOSIGNAL;
 	status = (int)send(fd, (const void*)buf, (size_t)len, flags);
@@ -1181,7 +1190,7 @@ int _send(SOCKET s, const char* buf, int len, int flags)
 
 int _sendto(SOCKET s, const char* buf, int len, int flags, const struct sockaddr* to, int tolen)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	status = (int)sendto(fd, (const void*)buf, (size_t)len, flags, to, (socklen_t)tolen);
 	return status;
@@ -1189,7 +1198,7 @@ int _sendto(SOCKET s, const char* buf, int len, int flags, const struct sockaddr
 
 int _setsockopt(SOCKET s, int level, int optname, const char* optval, int optlen)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	status = setsockopt(fd, level, optname, (const void*)optval, (socklen_t)optlen);
 	return status;
@@ -1197,7 +1206,7 @@ int _setsockopt(SOCKET s, int level, int optname, const char* optval, int optlen
 
 int _shutdown(SOCKET s, int how)
 {
-	int status;
+	int status = 0;
 	int fd = (int)s;
 	int s_how = -1;
 
@@ -1214,6 +1223,8 @@ int _shutdown(SOCKET s, int how)
 		case SD_BOTH:
 			s_how = SHUT_RDWR;
 			break;
+		default:
+			break;
 	}
 
 	if (s_how < 0)
@@ -1225,8 +1236,8 @@ int _shutdown(SOCKET s, int how)
 
 SOCKET _socket(int af, int type, int protocol)
 {
-	int fd;
-	SOCKET s;
+	int fd = 0;
+	SOCKET s = 0;
 	fd = socket(af, type, protocol);
 
 	if (fd < 0)
@@ -1238,51 +1249,50 @@ SOCKET _socket(int af, int type, int protocol)
 
 struct hostent* _gethostbyaddr(const char* addr, int len, int type)
 {
-	struct hostent* host;
+	struct hostent* host = NULL;
+	// NOLINTNEXTLINE(concurrency-mt-unsafe)
 	host = gethostbyaddr((const void*)addr, (socklen_t)len, type);
 	return host;
 }
 
 struct hostent* _gethostbyname(const char* name)
 {
-	struct hostent* host;
-	host = gethostbyname(name);
+	// NOLINTNEXTLINE(concurrency-mt-unsafe)
+	struct hostent* host = gethostbyname(name);
 	return host;
 }
 
 int _gethostname(char* name, int namelen)
 {
-	int status;
+	int status = 0;
 	status = gethostname(name, (size_t)namelen);
 	return status;
 }
 
-struct servent* _getservbyport(int port, const char* proto)
+struct servent* /* codespell:ignore servent */ _getservbyport(int port, const char* proto)
 {
-	struct servent* serv;
-	serv = getservbyport(port, proto);
-	return serv;
+	// NOLINTNEXTLINE(concurrency-mt-unsafe)
+	return getservbyport(port, proto);
 }
 
-struct servent* _getservbyname(const char* name, const char* proto)
+struct servent*                                     /* codespell:ignore servent */
+_getservbyname(const char* name, const char* proto) // codespell:ignore servent
+
 {
-	struct servent* serv;
-	serv = getservbyname(name, proto);
-	return serv;
+	// NOLINTNEXTLINE(concurrency-mt-unsafe)
+	return getservbyname(name, proto);
 }
 
 struct protoent* _getprotobynumber(int number)
 {
-	struct protoent* proto;
-	proto = getprotobynumber(number);
-	return proto;
+	// NOLINTNEXTLINE(concurrency-mt-unsafe)
+	return getprotobynumber(number);
 }
 
 struct protoent* _getprotobyname(const char* name)
 {
-	struct protoent* proto;
-	proto = getprotobyname(name);
-	return proto;
+	// NOLINTNEXTLINE(concurrency-mt-unsafe)
+	return getprotobyname(name);
 }
 
 #endif /* _WIN32 */

@@ -33,9 +33,6 @@ typedef struct rdp_mcs rdpMcs;
 #include <winpr/stream.h>
 #include <winpr/wtsapi.h>
 
-#define MCS_BASE_CHANNEL_ID 1001
-#define MCS_GLOBAL_CHANNEL_ID 1003
-
 enum MCS_Result
 {
 	MCS_Result_successful = 0,
@@ -158,6 +155,8 @@ struct rdp_mcs
 #define MCS_TYPE_CONNECT_RESPONSE 0x66
 
 const char* mcs_domain_pdu_string(DomainMCSPDU pdu);
+BOOL mcs_server_apply_to_settings(const rdpMcs* mcs, rdpSettings* settings);
+
 FREERDP_LOCAL BOOL mcs_recv_connect_initial(rdpMcs* mcs, wStream* s);
 FREERDP_LOCAL BOOL mcs_recv_connect_response(rdpMcs* mcs, wStream* s);
 FREERDP_LOCAL BOOL mcs_send_connect_response(rdpMcs* mcs);
@@ -167,19 +166,23 @@ FREERDP_LOCAL BOOL mcs_recv_attach_user_request(rdpMcs* mcs, wStream* s);
 FREERDP_LOCAL BOOL mcs_send_attach_user_request(rdpMcs* mcs);
 FREERDP_LOCAL BOOL mcs_recv_attach_user_confirm(rdpMcs* mcs, wStream* s);
 FREERDP_LOCAL BOOL mcs_send_attach_user_confirm(rdpMcs* mcs);
-FREERDP_LOCAL BOOL mcs_recv_channel_join_request(rdpMcs* mcs, wStream* s, UINT16* channelId);
+FREERDP_LOCAL BOOL mcs_recv_channel_join_request(rdpMcs* mcs, const rdpSettings* settings,
+                                                 wStream* s, UINT16* channelId);
 FREERDP_LOCAL BOOL mcs_send_channel_join_request(rdpMcs* mcs, UINT16 channelId);
 FREERDP_LOCAL BOOL mcs_recv_channel_join_confirm(rdpMcs* mcs, wStream* s, UINT16* channelId);
 FREERDP_LOCAL BOOL mcs_send_channel_join_confirm(rdpMcs* mcs, UINT16 channelId);
 FREERDP_LOCAL BOOL mcs_recv_disconnect_provider_ultimatum(rdpMcs* mcs, wStream* s, int* reason);
-FREERDP_LOCAL BOOL mcs_send_disconnect_provider_ultimatum(rdpMcs* mcs);
+FREERDP_LOCAL BOOL mcs_send_disconnect_provider_ultimatum(rdpMcs* mcs,
+                                                          enum Disconnect_Ultimatum reason);
 
-FREERDP_LOCAL void mcs_write_domain_mcspdu_header(wStream* s, DomainMCSPDU domainMCSPDU,
+FREERDP_LOCAL BOOL mcs_write_domain_mcspdu_header(wStream* s, DomainMCSPDU domainMCSPDU,
                                                   UINT16 length, BYTE options);
 
 FREERDP_LOCAL BOOL mcs_client_begin(rdpMcs* mcs);
 
-FREERDP_LOCAL rdpMcs* mcs_new(rdpTransport* transport);
 FREERDP_LOCAL void mcs_free(rdpMcs* mcs);
+
+WINPR_ATTR_MALLOC(mcs_free, 1)
+FREERDP_LOCAL rdpMcs* mcs_new(rdpTransport* transport);
 
 #endif /* FREERDP_LIB_CORE_MCS_H */

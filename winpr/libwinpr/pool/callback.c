@@ -21,32 +21,34 @@
 
 #include <winpr/crt.h>
 #include <winpr/pool.h>
+#include <winpr/wlog.h>
 #include <winpr/library.h>
 
 #ifdef WINPR_THREAD_POOL
 
 #ifdef _WIN32
+typedef BOOL(WINAPI* pCallbackMayRunLong_t)(PTP_CALLBACK_INSTANCE pci);
 static INIT_ONCE init_once_module = INIT_ONCE_STATIC_INIT;
-static BOOL(WINAPI* pCallbackMayRunLong)(PTP_CALLBACK_INSTANCE pci);
+static pCallbackMayRunLong_t pCallbackMayRunLong = NULL;
 
 static BOOL CALLBACK init_module(PINIT_ONCE once, PVOID param, PVOID* context)
 {
 	HMODULE kernel32 = LoadLibraryA("kernel32.dll");
 	if (kernel32)
-	{
-		pCallbackMayRunLong = (void*)GetProcAddress(kernel32, "CallbackMayRunLong");
-	}
+		pCallbackMayRunLong =
+		    GetProcAddressAs(kernel32, "CallbackMayRunLong", pCallbackMayRunLong_t);
 	return TRUE;
 }
 #endif
 
-BOOL winpr_CallbackMayRunLong(PTP_CALLBACK_INSTANCE pci)
+BOOL winpr_CallbackMayRunLong(WINPR_ATTR_UNUSED PTP_CALLBACK_INSTANCE pci)
 {
 #ifdef _WIN32
 	InitOnceExecuteOnce(&init_once_module, init_module, NULL, NULL);
 	if (pCallbackMayRunLong)
 		return pCallbackMayRunLong(pci);
 #endif
+	WLog_ERR("TODO", "TODO: implement");
 	/* No default implementation */
 	return FALSE;
 }

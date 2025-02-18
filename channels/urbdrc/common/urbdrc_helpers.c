@@ -195,7 +195,9 @@ static const char* call_to_string_proxy(BOOL client, UINT32 interfaceId, UINT32 
 	}
 }
 
-static const char* call_to_string_stub(BOOL client, UINT32 interfaceNr, UINT32 functionId)
+static const char* call_to_string_stub(WINPR_ATTR_UNUSED BOOL client,
+                                       WINPR_ATTR_UNUSED UINT32 interfaceNr,
+                                       WINPR_ATTR_UNUSED UINT32 functionId)
 {
 	return "QUERY_DEVICE_TEXT_RSP             [stub  |client]";
 }
@@ -386,8 +388,11 @@ const char* urb_function_string(UINT16 urb)
 void urbdrc_dump_message(wLog* log, BOOL client, BOOL write, wStream* s)
 {
 	const char* type = write ? "WRITE" : "READ";
-	UINT32 InterfaceId, MessageId, FunctionId;
-	size_t length, pos;
+	UINT32 InterfaceId = 0;
+	UINT32 MessageId = 0;
+	UINT32 FunctionId = 0;
+	size_t length = 0;
+	size_t pos = 0;
 
 	pos = Stream_GetPosition(s);
 	if (write)
